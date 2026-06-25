@@ -15,7 +15,8 @@ sudo apt-get update -y
 
 echo "▸ Installing Docker + Compose plugin + utilities"
 sudo apt-get install -y \
-  ca-certificates curl gnupg lsb-release ufw nginx wget
+  ca-certificates curl gnupg lsb-release ufw nginx wget \
+  certbot python3-certbot-nginx
 
 if ! command -v docker &> /dev/null; then
   sudo install -m 0755 -d /etc/apt/keyrings
@@ -62,5 +63,7 @@ cat <<'NEXT'
 
   4. Trigger first deploy by pushing to main (or run "Deploy to EC2" workflow manually).
 
-  5. (Optional) Setup nginx + HTTPS — see scripts/nginx-agent-platform.conf
+  5. Setup nginx + HTTPS (after DNS A record points at this host):
+       cd /opt/agent-platform && sudo bash scripts/setup-https.sh
+     Default domain: agent.mettlence.com. Override with DOMAIN=... EMAIL=...
 NEXT

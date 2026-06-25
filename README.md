@@ -65,6 +65,15 @@ Copy `.env` (one-time, manual — secrets never go through the repo):
 scp -i agent.mettlence.com.pem .env ubuntu@<ec2-host>:/opt/agent-platform/.env
 ```
 
+Setup HTTPS (one-time, after DNS `agent.mettlence.com` → EC2 is live):
+
+```bash
+ssh -i agent.mettlence.com.pem ubuntu@<ec2-host>
+cd /opt/agent-platform && sudo bash scripts/setup-https.sh
+```
+
+The script is idempotent: issues a Let's Encrypt cert via webroot challenge, installs the nginx site config, and enables `certbot.timer` for auto-renewal. Override `DOMAIN=` / `EMAIL=` to use a different host.
+
 ### Required GitHub repo secrets
 
 Settings → Secrets and variables → Actions → New repository secret:
