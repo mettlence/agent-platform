@@ -99,6 +99,48 @@ When this happens:
    `receipts_without_cid` had no cId at all (Maropost funnel). Escalate
    these — the platform cannot bridge them today.
 
+#### Escalation format for fragmented cases
+
+When the customer is fragmented across records, the single-order escalation
+template does not fit. Use this expanded template instead. **ALWAYS list
+every delivered order with its `readingUrl` AND `downloadUrl` — the entire
+point of doing the fragmentation triage is so CS can send a working link
+without doing another lookup.** Drop a record entirely if it has zero
+orders (mention it in "What I found" instead).
+
+```
+**Customer:** <Full Name> · `<primary customer_id>`
+**Optin email:** <optin@example.com>
+**Records sharing this email:** <N>
+
+**Record A** — cId `<short>…` · linked receipts: `<RCPT1>`, `<RCPT2>`
+- main `<orderId>` · readingReady=<true|false>
+  Reading: <https://...>
+  Download: <https://...>
+- oto1 `<orderId>` · readingReady=…
+  Reading: <https://...>
+  Download: <https://...>
+- subscription `<orderId>` · status=<active|...>
+  Reading: <https://...>
+  Download: <https://...>
+
+**Record B** — cId `<short>…` · linked receipts: `<RCPT3>`
+- main `<orderId>` · readingReady=…
+  Reading: <https://...>
+  Download: <https://...>
+
+**Unattached receipts:** `<RCPT_X>`, `<RCPT_Y>` (no cId in vendor_variables — Maropost funnel; manual lookup needed)
+**Unresolved cIds:** `<cId>` (`<RCPT_Z>`) — record archived or never created
+
+**What I found:**
+- <one-line bullet>
+- <one-line bullet>
+```
+
+If you stay on the single-order template in a fragmented case, CS still
+has to query asksabrina manually to get a link — the recovery is only
+half done.
+
 ### When only a `contact_id` is present (no `cId`)
 
 ClickBank orders coming from a Maropost funnel carry `contact_id` in
