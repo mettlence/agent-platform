@@ -33,8 +33,8 @@ export interface RunOutput {
   tokens_used?: number
 }
 
-const MAX_ITERATIONS = 20
-const MAX_TOKENS_PER_RUN = 50_000
+const MAX_ITERATIONS = 25
+const MAX_TOKENS_PER_RUN = 100_000
 
 const VENDOR_BY_PROJECT: Record<Project, string> = {
   asksabrina: 'sabrinapsy',

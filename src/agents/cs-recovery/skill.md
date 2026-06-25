@@ -184,8 +184,8 @@ This section is populated from the `agent_lessons` collection at runtime.
 
 ## Hard stops
 
-- Token budget per ticket: 50,000 tokens. If exceeded, halt and escalate.
-- Tool call limit per ticket: 20 calls. If exceeded, halt and escalate.
+- Token budget per ticket: 100,000 tokens. If exceeded, halt and escalate.
+- Tool call limit per ticket: 25 calls. If exceeded, halt and escalate.
 - If a gate fails and you can't recover after 2 retries, escalate.
 
 ## Output format — escalation summary
