@@ -312,11 +312,19 @@ async function executeCreateOrder(input: ExecuteInput): Promise<ExecuteOutput> {
     return { ok: false, error: 'gate failed at execution', gate_failures: gate.failures }
   }
 
-  // For subscriptions, confirm the recurring billing is still live on ClickBank.
-  // If the customer canceled between draft and execution, do not create.
+  // For subscriptions, ensure the transaction type already verified by the
+  // payment gate is one that represents an active billing (SALE for the
+  // initial purchase, BILL for a recurring rebill). RFND/CGBK/CANCEL-REBILL
+  // would have been blocked by the gate above; this is a defense-in-depth
+  // re-check against the freshly fetched order.
+  //
+  // Earlier versions also called HEAD /orders2/<receipt> as an "is sub still
+  // active" probe, but ClickBank returns 404 for order-bump child receipts
+  // (e.g. SPR-OB1) even when the order is valid and refundable — the HEAD
+  // endpoint only resolves the parent subscription receipt. Trusting the
+  // 404 produced false negatives that blocked legitimate recoveries.
   if (draft.order_kind === 'subscription') {
-    const stillActive = await clickbank.isSubscriptionActive(draft.payment_meta.clickbankReceipt)
-    if (!stillActive) {
+    if (!order || (order.transaction_type !== 'SALE' && order.transaction_type !== 'BILL')) {
       await recordAction({
         thread_id,
         ticket_id,
@@ -325,15 +333,18 @@ async function executeCreateOrder(input: ExecuteInput): Promise<ExecuteOutput> {
         action_type: 'create_order',
         before: null,
         after: null,
-        reasoning: 'subscription no longer active at execution time',
+        reasoning: `subscription transaction type is "${order?.transaction_type ?? 'unknown'}" at execution time`,
         gates_passed: draft.gates_passed,
         approved_by,
         approved_at: new Date(),
         executed_at: new Date(),
         result: 'failure',
-        error: 'subscription is no longer active on ClickBank',
+        error: `subscription transaction type is "${order?.transaction_type ?? 'unknown'}" — expected SALE or BILL`,
       })
-      return { ok: false, error: 'subscription is no longer active on ClickBank' }
+      return {
+        ok: false,
+        error: `subscription transaction type is "${order?.transaction_type ?? 'unknown'}" — expected SALE or BILL`,
+      }
     }
   }
 

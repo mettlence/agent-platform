@@ -81,8 +81,9 @@ you own the data fix.
        them up using the `contact_id` from ClickBank vendor_variables.
        (Maropost connector pending — leave empty for now and flag in the
        reasoning if the questions are missing.)
-     For subscription, the gate also re-checks `isSubscriptionActive` at
-     execution time so a between-draft-and-✅ cancellation is caught.
+     For subscription, the executor re-fetches the ClickBank order at
+     execution time and refuses the create if the transaction type is no
+     longer SALE / BILL (refund or cancel-rebill caught defense-in-depth).
    - If no receipts at all for the email at ClickBank: customer may be
      confused, or this may be fraud. Escalate with the data you found.
 
@@ -176,9 +177,11 @@ can look it up in Maropost manually.
   exists because payment email and optin email legitimately differ in ~15% of
   recoveries; rejecting on email alone causes false negatives.
 - Receipt product SKU maps to the same project as the ticket
-- For `create_order` subscription: ClickBank reports subscription still
-  active (HEAD /orders2/<receipt> returns 204). Re-checked at execution time
-  so a cancellation between draft and ✅ blocks the create.
+- For `create_order` subscription: the freshly-fetched ClickBank transaction
+  type is SALE or BILL (the same gate, re-run defensively at execution time).
+  Note: HEAD /orders2/<receipt> is NOT a reliable "is sub still active" probe
+  — ClickBank returns 404 for order-bump receipts (SPR-OB1/OB2) even when
+  the order is valid.
 - No prior successful action on this ticket (check `idempotency_keys`)
 
 ## What you must NEVER do without explicit human approval
