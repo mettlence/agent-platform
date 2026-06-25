@@ -65,8 +65,26 @@ export interface ExecuteOutput {
   result?: {
     before: Record<string, unknown>
     after: Record<string, unknown>
+    /**
+     * Best link to surface to CS. For main/oto: the reading viewer.
+     * For subscription: the question page where the customer asks a new
+     * question. Undefined when not yet available (e.g. main reading job
+     * is still running past the 5-min wait window).
+     */
     reading_link?: string
+    /** Order-area / download link (always v1 or v2 download page). */
+    download_link?: string
+    /** Subscription-only: page to ask a new question + view answer history. */
+    question_page_url?: string
+    /** Kind the action operated on — drives message formatting. */
+    kind?: 'main' | 'oto1' | 'oto2' | 'subscription'
     job_id?: string
+    /**
+     * True when the executor returned before the reading generation job
+     * finished. The message formatter should tell CS to check back later
+     * rather than imply the link is missing forever.
+     */
+    job_pending?: boolean
   }
   error?: string
   gate_failures?: string[]
@@ -147,19 +165,20 @@ async function executeUpdateOrder(input: ExecuteInput): Promise<ExecuteOutput> {
 
     // Chain regenerate immediately after mark-paid (the whole point of the action).
     const ensureRes = await asksabrina.ensureReading(draft.ref, draft.order_kind)
-    let readingLink: string | undefined
     let jobId: string | undefined
+    let jobPending = false
 
-    if (ensureRes.status === 'already_ready') {
-      readingLink = ensureRes.readingUrl ?? ensureRes.downloadUrl
-    } else if (ensureRes.jobId) {
+    if (ensureRes.status !== 'already_ready' && ensureRes.jobId) {
       jobId = ensureRes.jobId
       const finalJob = await asksabrina.waitForJob(ensureRes.jobId, { timeoutMs: 5 * 60 * 1000 })
-      if (finalJob?.status === 'done') {
-        const view = await asksabrina.lookupCustomer(customer_email)
-        readingLink = findReadingLink(view, draft.ref, draft.order_kind) ?? undefined
-      }
+      if (finalJob?.status !== 'done') jobPending = true
     }
+
+    const urls = await resolveActionUrls({
+      customer_email,
+      ref: draft.ref,
+      kind: draft.order_kind,
+    })
 
     const actionId = await recordAction({
       thread_id,
@@ -175,13 +194,20 @@ async function executeUpdateOrder(input: ExecuteInput): Promise<ExecuteOutput> {
       approved_at: new Date(),
       executed_at: new Date(),
       result: 'success',
-      result_meta: { reading_link: readingLink, job_id: jobId },
+      result_meta: { ...urls, job_id: jobId },
     })
 
     return {
       ok: true,
       action_id: actionId,
-      result: { before: result.before, after: result.after, reading_link: readingLink, job_id: jobId },
+      result: {
+        before: result.before,
+        after: result.after,
+        ...urls,
+        kind: draft.order_kind,
+        job_id: jobId,
+        job_pending: jobPending,
+      },
     }
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err)
@@ -221,19 +247,20 @@ async function executeRegenerate(input: ExecuteInput): Promise<ExecuteOutput> {
 
   try {
     const ensureRes = await asksabrina.ensureReading(draft.ref, draft.order_kind)
-    let readingLink: string | undefined
     let jobId: string | undefined
+    let jobPending = false
 
-    if (ensureRes.status === 'already_ready') {
-      readingLink = ensureRes.readingUrl ?? ensureRes.downloadUrl
-    } else if (ensureRes.jobId) {
+    if (ensureRes.status !== 'already_ready' && ensureRes.jobId) {
       jobId = ensureRes.jobId
       const finalJob = await asksabrina.waitForJob(ensureRes.jobId, { timeoutMs: 5 * 60 * 1000 })
-      if (finalJob?.status === 'done') {
-        const view = await asksabrina.lookupCustomer(customer_email)
-        readingLink = findReadingLink(view, draft.ref, draft.order_kind) ?? undefined
-      }
+      if (finalJob?.status !== 'done') jobPending = true
     }
+
+    const urls = await resolveActionUrls({
+      customer_email,
+      ref: draft.ref,
+      kind: draft.order_kind,
+    })
 
     const actionId = await recordAction({
       thread_id,
@@ -249,13 +276,20 @@ async function executeRegenerate(input: ExecuteInput): Promise<ExecuteOutput> {
       approved_at: new Date(),
       executed_at: new Date(),
       result: 'success',
-      result_meta: { reading_link: readingLink, job_id: jobId },
+      result_meta: { ...urls, job_id: jobId },
     })
 
     return {
       ok: true,
       action_id: actionId,
-      result: { before: {}, after: { regenerated: true }, reading_link: readingLink, job_id: jobId },
+      result: {
+        before: {},
+        after: { regenerated: true },
+        ...urls,
+        kind: draft.order_kind,
+        job_id: jobId,
+        job_pending: jobPending,
+      },
     }
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err)
@@ -370,22 +404,23 @@ async function executeCreateOrder(input: ExecuteInput): Promise<ExecuteOutput> {
 
     // Chain delivery for main/oto only. Subscription readings are per-question
     // and filled in later by the customer — server creates an empty record.
-    let readingLink: string | undefined
     let jobId: string | undefined
+    let jobPending = false
 
     if (draft.order_kind !== 'subscription') {
       const ensureRes = await asksabrina.ensureReading(created.ref, draft.order_kind)
-      if (ensureRes.status === 'already_ready') {
-        readingLink = ensureRes.readingUrl ?? ensureRes.downloadUrl
-      } else if (ensureRes.jobId) {
+      if (ensureRes.status !== 'already_ready' && ensureRes.jobId) {
         jobId = ensureRes.jobId
         const finalJob = await asksabrina.waitForJob(ensureRes.jobId, { timeoutMs: 5 * 60 * 1000 })
-        if (finalJob?.status === 'done') {
-          const view = await asksabrina.lookupCustomer(customer_email)
-          readingLink = findReadingLink(view, created.ref, draft.order_kind) ?? undefined
-        }
+        if (finalJob?.status !== 'done') jobPending = true
       }
     }
+
+    const urls = await resolveActionUrls({
+      customer_email,
+      ref: created.ref,
+      kind: draft.order_kind,
+    })
 
     const actionId = await recordAction({
       thread_id,
@@ -401,13 +436,20 @@ async function executeCreateOrder(input: ExecuteInput): Promise<ExecuteOutput> {
       approved_at: new Date(),
       executed_at: new Date(),
       result: 'success',
-      result_meta: { reading_link: readingLink, job_id: jobId, created_ref: created.ref },
+      result_meta: { ...urls, job_id: jobId, created_ref: created.ref },
     })
 
     return {
       ok: true,
       action_id: actionId,
-      result: { before: {}, after: created.after, reading_link: readingLink, job_id: jobId },
+      result: {
+        before: {},
+        after: created.after,
+        ...urls,
+        kind: draft.order_kind,
+        job_id: jobId,
+        job_pending: jobPending,
+      },
     }
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err)
@@ -441,4 +483,44 @@ function findReadingLink(
     kind === 'main' ? view.mainOrders : kind === 'oto1' ? view.oto1Orders : kind === 'oto2' ? view.oto2Orders : []
   const match = buckets.find((p) => p.ref === ref)
   return match?.readingUrl ?? match?.downloadUrl ?? null
+}
+
+/**
+ * Pull every URL CS might want to paste, based on what kind of action just
+ * succeeded. Main/oto/oto2 surface the reading viewer + download page;
+ * subscription surfaces the question page (where the customer asks new
+ * questions) + the parent main order's download page.
+ */
+async function resolveActionUrls(opts: {
+  customer_email: string
+  ref: string
+  kind: asksabrina.OrderKind
+}): Promise<{
+  reading_link?: string
+  download_link?: string
+  question_page_url?: string
+}> {
+  const view = await asksabrina.lookupCustomer(opts.customer_email).catch(() => null)
+  if (!view) return {}
+
+  if (opts.kind === 'subscription') {
+    return {
+      question_page_url: view.subscription?.questionPageUrl ?? undefined,
+      // The download/order-area link for a subscription customer is the
+      // main order's downloadUrl — same page they got at purchase time.
+      download_link: view.mainOrders[0]?.downloadUrl ?? undefined,
+    }
+  }
+
+  const buckets: asksabrina.AsksabrinaProduct[] =
+    opts.kind === 'main'
+      ? view.mainOrders
+      : opts.kind === 'oto1'
+        ? view.oto1Orders
+        : view.oto2Orders
+  const match = buckets.find((p) => p.ref === opts.ref)
+  return {
+    reading_link: match?.readingUrl ?? undefined,
+    download_link: match?.downloadUrl ?? undefined,
+  }
 }

@@ -62,14 +62,31 @@ export async function handleReactionAdd(
     })
 
     if (result.ok) {
-      const link = result.result?.reading_link
-      const lines = [
+      const r = result.result ?? ({} as NonNullable<typeof result.result>)
+      const lines: string[] = [
         `✅ Done.`,
         `- Action ID: \`${result.action_id?.toString() ?? '?'}\``,
-        link ? `- Link: ${link}` : `- (no link returned — job may still be running, check with \`!cs-job ${result.result?.job_id}\`)`,
-        '',
-        'Send to customer or paste into LiveAgent reply.',
-      ].filter(Boolean)
+      ]
+      // Surface links by kind. Subscription has no reading job — its primary
+      // link is the question page where the customer asks new questions.
+      // Main / OTO have reading + download URLs; if the generation job is
+      // still pending, tell CS to check back rather than imply failure.
+      if (r.kind === 'subscription') {
+        if (r.question_page_url) lines.push(`- Question page: ${r.question_page_url}`)
+        if (r.download_link) lines.push(`- Download: ${r.download_link}`)
+        if (!r.question_page_url && !r.download_link) {
+          lines.push('- (no question page resolved — confirm subscription row was created on the correct main order)')
+        }
+      } else {
+        if (r.reading_link) lines.push(`- Reading: ${r.reading_link}`)
+        if (r.download_link) lines.push(`- Download: ${r.download_link}`)
+        if (r.job_pending && r.job_id) {
+          lines.push(`- (reading generation still running — job \`${r.job_id}\`. Re-run \`!cs <ticket>\` in a few minutes to fetch the link.)`)
+        } else if (!r.reading_link && !r.download_link) {
+          lines.push('- (no link resolved — check asksabrina admin for this order ref)')
+        }
+      }
+      lines.push('', 'Send to customer or paste into LiveAgent reply.')
       await postToThread(approval.thread_id, lines.join('\n'))
     } else {
       const lines = [
