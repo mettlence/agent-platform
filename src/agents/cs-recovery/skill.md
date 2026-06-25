@@ -59,10 +59,45 @@ you own the data fix.
 4. If order found AND `paymentStatus = 1` (already marked paid):
    - Likely a generation failure, not a payment failure.
    - Draft action: regenerate only.
-5. If order NOT found:
-   - Search ClickBank by email — does the customer have a receipt for this product?
-   - If yes: edge case. Draft creating a new order. **Always escalate to human, never auto-execute.**
-   - If no: customer may be confused, or this may be fraud. Escalate to human with the data you found.
+5. If order NOT found on the resolved record:
+   - Search ClickBank by email (`find_clickbank_receipts_by_email`).
+   - If the receipts contain MORE THAN ONE distinct cId, the customer is
+     fragmented across asksabrina records — see "Fragmented customer records"
+     below before concluding the order doesn't exist.
+   - If receipts exist and all share one cId: edge case. Draft creating a new
+     order. **Always escalate to human, never auto-execute.**
+   - If no receipts at all: customer may be confused, or this may be fraud.
+     Escalate to human with the data you found.
+
+### Fragmented customer records
+
+The asksabrina backend creates a NEW customer record on every funnel pass
+instead of upserting by email. One real human may have 4+ records sharing
+the same email, with orders scattered across them. `lookup_customer(email)`
+returns only ONE record (best-match), hiding the rest — leading to wrong
+"customer has no orders" conclusions.
+
+Signal: `find_clickbank_receipts_by_email` returns receipts whose
+`vendor_variables.cId` values are NOT all the same.
+
+When this happens:
+
+1. Call `find_all_customer_records({ project, email })` once. It returns
+   every cId-linked record plus the email-matched record, grouped so you
+   see which receipts belong to which record (`linked_receipts` on each
+   record; `receipts_by_cid` overall).
+2. The right record for a complaint is the one whose `customer.id` equals
+   the cId of the specific receipt being investigated. If the complaint
+   doesn't name a receipt, look across all records for the most recent
+   purchase whose reading is not yet ready.
+3. If a receipt's cId matches a record but that record has no order for
+   the receipt's product, the order failed creation entirely. Escalate
+   with both the receipt detail and the orphan record so a human can
+   decide whether to manually create the order or merge records.
+4. Receipts listed in `receipts_unresolved` had cId values that didn't
+   resolve to any asksabrina record (likely archived); receipts in
+   `receipts_without_cid` had no cId at all (Maropost funnel). Escalate
+   these — the platform cannot bridge them today.
 
 ### When only a `contact_id` is present (no `cId`)
 

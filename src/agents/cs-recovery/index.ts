@@ -266,6 +266,92 @@ async function dispatchTool(
         return { output: orders }
       }
 
+      case 'find_all_customer_records': {
+        const { project, email } = input as { project: Project; email: string }
+        if (project !== ctx.project) {
+          return { output: { error: 'project mismatch' }, is_error: true }
+        }
+        if (project !== 'asksabrina') {
+          return { output: { error: 'project not implemented' }, is_error: true }
+        }
+
+        const vendor = VENDOR_BY_PROJECT[project]
+        const receipts = await clickbank.findOrdersByEmail(email, vendor, { type: 'SALE' })
+
+        // Group receipts by cId so callers see which receipts belong to which
+        // (potentially fragmented) asksabrina record.
+        const receiptsByCid = new Map<string, string[]>()
+        const receiptsWithoutCid: string[] = []
+        for (const r of receipts) {
+          if (r.customer_id) {
+            const list = receiptsByCid.get(r.customer_id) ?? []
+            list.push(r.receipt)
+            receiptsByCid.set(r.customer_id, list)
+          } else {
+            receiptsWithoutCid.push(r.receipt)
+          }
+        }
+
+        // Look up the email-matched record plus every unique cId in parallel.
+        // Catch per-call so one 404 doesn't void the whole result.
+        const lookupViews = await Promise.all([
+          asksabrina.lookupCustomer(email).catch(() => null),
+          ...Array.from(receiptsByCid.keys()).map((cId) =>
+            asksabrina.lookupCustomer(cId).catch(() => null),
+          ),
+        ])
+
+        // Dedupe by customer.id (email-match and cId-match may resolve to the
+        // same record); attach linked_receipts based on the cId index.
+        const recordMap = new Map<
+          string,
+          {
+            customer: asksabrina.AsksabrinaCustomerView['customer']
+            matched_via: string
+            mainOrders: asksabrina.AsksabrinaCustomerView['mainOrders']
+            oto1Orders: asksabrina.AsksabrinaCustomerView['oto1Orders']
+            oto2Orders: asksabrina.AsksabrinaCustomerView['oto2Orders']
+            subscription: asksabrina.AsksabrinaCustomerView['subscription']
+            linked_receipts: string[]
+          }
+        >()
+        for (const view of lookupViews) {
+          if (!view) continue
+          const cid = view.customer.id
+          if (recordMap.has(cid)) continue
+          recordMap.set(cid, {
+            customer: view.customer,
+            matched_via: view.matchedVia,
+            mainOrders: view.mainOrders,
+            oto1Orders: view.oto1Orders,
+            oto2Orders: view.oto2Orders,
+            subscription: view.subscription ?? null,
+            linked_receipts: receiptsByCid.get(cid) ?? [],
+          })
+        }
+
+        const records = Array.from(recordMap.values())
+        const resolvedCids = new Set(recordMap.keys())
+        const receiptsUnresolved = Array.from(receiptsByCid.entries())
+          .filter(([cId]) => !resolvedCids.has(cId))
+          .flatMap(([, list]) => list)
+
+        return {
+          output: {
+            email,
+            total_receipts: receipts.length,
+            receipts_by_cid: Object.fromEntries(receiptsByCid),
+            receipts_without_cid: receiptsWithoutCid,
+            receipts_unresolved: receiptsUnresolved,
+            records,
+            fragmentation_warning:
+              records.length > 1
+                ? `${records.length} distinct customer records share email "${email}" — backend created fragmented records across funnel passes. Each record may own different orders; pick the one whose cId matches the receipt of complaint.`
+                : null,
+          },
+        }
+      }
+
       case 'check_regeneration_job': {
         const { project, job_id } = input as { project: Project; job_id: string }
         if (project === 'asksabrina') {

@@ -65,6 +65,19 @@ export const csRecoveryTools: Tool[] = [
     },
   },
   {
+    name: 'find_all_customer_records',
+    description:
+      'Discover ALL asksabrina customer records sharing one email. Use when find_clickbank_receipts_by_email returns receipts with more than one distinct cId — the backend creates a new customer record per funnel pass, so lookup_customer(email) only surfaces ONE of them. This tool fetches every cId-linked record AND the email-matched record, groups receipts by cId so you see which record owns which purchase, and flags fragmentation. Returns { records, receipts_by_cid, receipts_without_cid, receipts_unresolved, total_receipts, fragmentation_warning }.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        project: { type: 'string', enum: ['asksabrina', 'astroloversketch'] },
+        email: { type: 'string' },
+      },
+      required: ['project', 'email'],
+    },
+  },
+  {
     name: 'check_regeneration_job',
     description:
       'Check the status of a reading-regeneration job by jobId. Use to see if a previously-triggered regeneration finished, failed, or is still running.',
