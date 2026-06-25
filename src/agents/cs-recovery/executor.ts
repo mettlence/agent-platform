@@ -41,6 +41,18 @@ export interface DraftAction {
    * never trusted from the draft alone.
    */
   customer_id?: string
+  /**
+   * Required for `create_order` with kind oto1 / oto2 / subscription — the
+   * mongo _id of the main Order this row links to. Backend rejects with 400
+   * if missing. Ignored when kind is `main`.
+   */
+  main_order_id?: string
+  /** Optional snapshot for create_order audit; backend falls back to customer.email. */
+  billing_email?: string
+  /** create_order kind=main only. Backend default 'v2'. */
+  engine_version?: 'v1' | 'v2'
+  /** create_order kind=main only. Customer's intake questions. */
+  question?: string[]
   before?: Record<string, unknown>
   after?: Record<string, unknown>
   reasoning: string
@@ -264,6 +276,12 @@ async function executeCreateOrder(input: ExecuteInput): Promise<ExecuteOutput> {
         'create_order requires customer_id (the target asksabrina customer.id from resolve_customer_identity / find_all_customer_records)',
     }
   }
+  if (draft.order_kind !== 'main' && !draft.main_order_id) {
+    return {
+      ok: false,
+      error: `create_order kind=${draft.order_kind} requires main_order_id (the mongo _id of the parent main Order). Backend rejects without it.`,
+    }
+  }
 
   // Re-verify ClickBank receipt at execution time. Bridge identity via
   // customer_id so a payment/optin email mismatch is tolerated.
@@ -333,6 +351,10 @@ async function executeCreateOrder(input: ExecuteInput): Promise<ExecuteOutput> {
       customerId: draft.customer_id,
       kind: draft.order_kind,
       paymentMeta: draft.payment_meta,
+      ...(draft.main_order_id ? { mainOrderId: draft.main_order_id } : {}),
+      ...(draft.billing_email ? { billingEmail: draft.billing_email } : {}),
+      ...(draft.engine_version ? { engineVersion: draft.engine_version } : {}),
+      ...(draft.question ? { question: draft.question } : {}),
     })
 
     // Chain delivery for main/oto only. Subscription readings are per-question

@@ -112,6 +112,28 @@ export const csRecoveryTools: Tool[] = [
           description:
             'Required for create_order — the target asksabrina customer.id from resolve_customer_identity or find_all_customer_records. For update_order it is OPTIONAL and acts as an identity bridge: when set, the gate tolerates a payment/optin email mismatch as long as ClickBank.vendorVariables.cId matches.',
         },
+        main_order_id: {
+          type: 'string',
+          description:
+            'REQUIRED for create_order kind=oto1 | oto2 | subscription — the mongo _id of the parent main Order this row links to. Pick it from the resolved customer view (customer_view.mainOrders[*].ref). Omit for kind=main. Backend rejects with 400 if missing.',
+        },
+        billing_email: {
+          type: 'string',
+          description:
+            'Optional for create_order. Snapshot of the ClickBank billing email for audit; backend falls back to customer.email when omitted. Useful when payment email differs from optin email.',
+        },
+        engine_version: {
+          type: 'string',
+          enum: ['v1', 'v2'],
+          description:
+            'Optional for create_order kind=main. Defaults to v2 server-side. Use v1 only when explicitly recovering a legacy funnel order.',
+        },
+        question: {
+          type: 'array',
+          items: { type: 'string' },
+          description:
+            'Optional for create_order kind=main. The customer\'s 3 intake questions. When the funnel skipped optin (marketing email bypass), these can be sourced from Maropost contact fields asksabrina_question_1/2/3 via the contact_id in ClickBank vendor_variables. Leave empty array if unrecoverable — reading will generate without personalized prompts.',
+        },
         order_kind: {
           type: 'string',
           enum: ['main', 'oto1', 'oto2', 'subscription'],

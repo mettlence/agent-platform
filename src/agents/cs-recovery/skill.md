@@ -66,8 +66,21 @@ you own the data fix.
      deciding.
    - If a valid receipt exists and matches a customer record (directly or via
      cId), but the corresponding order row is missing on that record: **draft
-     `create_order`**. This is the recovery agent's primary job. Pass the
-     `payment_meta` from the receipt and `customer_id` of the resolved record.
+     `create_order`**. This is the recovery agent's primary job. Required
+     fields:
+     - `customer_id`: from the resolved record (`customer_view.customer.id`)
+     - `payment_meta`: from the verified ClickBank receipt
+     - `main_order_id`: **required for kind=oto1/oto2/subscription**. Pick
+       the parent main order's `ref` from `customer_view.mainOrders[*].ref`.
+       If there is no paid main order on the record, you cannot create an
+       OTO or subscription — escalate instead. Backend rejects with 400 if
+       this field is missing.
+     - `question`: optional, main only. When the funnel skipped optin
+       (marketing email bypass), the customer's 3 intake questions live
+       on the Maropost contact (`asksabrina_question_1/2/3`); cross-look
+       them up using the `contact_id` from ClickBank vendor_variables.
+       (Maropost connector pending — leave empty for now and flag in the
+       reasoning if the questions are missing.)
      For subscription, the gate also re-checks `isSubscriptionActive` at
      execution time so a between-draft-and-✅ cancellation is caught.
    - If no receipts at all for the email at ClickBank: customer may be

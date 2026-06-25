@@ -364,8 +364,10 @@ async function dispatchTool(
       case 'propose_action': {
         const draft = input as {
           action_type?: string
+          order_kind?: string
           ref?: string
           customer_id?: string
+          main_order_id?: string
           payment_meta?: Record<string, unknown>
         }
         if (draft.action_type === 'create_order') {
@@ -381,6 +383,14 @@ async function dispatchTool(
           if (!draft.payment_meta) {
             return {
               output: { error: 'create_order requires payment_meta sourced from the verified ClickBank receipt' },
+              is_error: true,
+            }
+          }
+          if (draft.order_kind !== 'main' && !draft.main_order_id) {
+            return {
+              output: {
+                error: `create_order kind=${draft.order_kind} requires main_order_id (the mongo _id of the parent main Order from customer_view.mainOrders[*].ref). Backend rejects without it.`,
+              },
               is_error: true,
             }
           }

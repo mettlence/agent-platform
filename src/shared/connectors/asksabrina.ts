@@ -204,6 +204,14 @@ export interface CreateOrderInput {
     vendor: string
     productSku?: string
   }
+  /** REQUIRED by backend for oto1 / oto2 / subscription. Omit only for kind=main. */
+  mainOrderId?: string
+  /** Optional snapshot for audit; backend falls back to customer.email when omitted. */
+  billingEmail?: string
+  /** Main only. Defaults to 'v2' server-side when omitted. */
+  engineVersion?: 'v1' | 'v2'
+  /** Main only. Customer's intake questions (from Maropost contact when funnel skipped optin). */
+  question?: string[]
 }
 
 export interface CreateOrderResponse {
