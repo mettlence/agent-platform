@@ -9,6 +9,19 @@ import type { Tool } from '@/shared/llm/client.js'
  */
 export const csRecoveryTools: Tool[] = [
   {
+    name: 'resolve_customer_identity',
+    description:
+      'Given a ClickBank receipt, resolve the asksabrina customer record even when the payment email differs from the optin email. Tries in order: (1) lookup by receipt at the project, (2) ClickBank vendorVariables.cId → lookup by customer id, (3) lookup by ClickBank payment email. Returns the customer view, matched_via, payment_email, optin_email, customer_id (cId), contact_id (Maropost), vendor_variables, and email_mismatch flag. Use this BEFORE verify_clickbank_receipt whenever the customer email in the ticket may be wrong or the receipt is the only reliable identifier.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        project: { type: 'string', enum: ['asksabrina', 'astroloversketch'] },
+        receipt: { type: 'string' },
+      },
+      required: ['project', 'receipt'],
+    },
+  },
+  {
     name: 'lookup_customer',
     description:
       'Fuzzy customer lookup against the project. Pass an email, ClickBank receipt, internal orderId, or Mongo _id. Returns the customer view with all products (main / oto1 / oto2 / subscription), payment status, and ready-or-not state for each reading. Always call this first.',
@@ -24,11 +37,16 @@ export const csRecoveryTools: Tool[] = [
   {
     name: 'verify_clickbank_receipt',
     description:
-      'Fetch a ClickBank order by receipt ID and run it through the payment gate. Returns { order, gate } where gate.passed indicates whether all conditions are met (transaction type SALE/BILL, email matches, amount > 0, vendor maps to expected project). This is the payment gate — never propose mark-paid without calling this first.',
+      'Fetch a ClickBank order by receipt ID and run it through the payment gate. Returns { order, gate } where gate.passed indicates whether all conditions are met (transaction type SALE/BILL, identity match, amount > 0, vendor maps to expected project). Pass expected_customer_id (from resolve_customer_identity) when the payment email legitimately differs from the optin email — the gate will bridge identity via the ClickBank cId vendor variable. Never propose mark-paid without calling this first.',
     input_schema: {
       type: 'object',
       properties: {
         receipt: { type: 'string' },
+        expected_customer_id: {
+          type: 'string',
+          description:
+            'Optional. asksabrina customer.id obtained from resolve_customer_identity. When provided, an email mismatch becomes a warning instead of a failure if order.customer_id (vendorVariables.cId) matches.',
+        },
       },
       required: ['receipt'],
     },
@@ -92,6 +110,11 @@ export const csRecoveryTools: Tool[] = [
             productSku: { type: 'string' },
           },
         },
+        customer_id_link: {
+          type: 'string',
+          description:
+            'Optional. The asksabrina customer.id used to bridge identity when the ClickBank payment email differs from the optin email. The executor re-runs the gate with this value so the email mismatch is tolerated only when ClickBank.vendorVariables.cId matches.',
+        },
         before: {
           type: 'object',
           description: 'Snapshot of the order state before the proposed change (for audit log).',
@@ -102,12 +125,12 @@ export const csRecoveryTools: Tool[] = [
         },
         reasoning: {
           type: 'string',
-          description: 'One paragraph explaining WHY this action is safe to take: which gates passed, what evidence matched.',
+          description: 'One paragraph explaining WHY this action is safe to take: which gates passed, what evidence matched, and (if applicable) why an email mismatch was acceptable.',
         },
         gates_passed: {
           type: 'array',
           items: { type: 'string' },
-          description: 'Named gates that returned passed=true (e.g. "clickbank.transaction_type_ok", "clickbank.email_matches").',
+          description: 'Named gates that returned passed=true (e.g. "clickbank.transaction_type_ok", "clickbank.identity_via_cId").',
         },
       },
       required: ['action_type', 'project', 'ref', 'order_kind', 'reasoning', 'gates_passed'],

@@ -28,6 +28,13 @@ export interface DraftAction {
     vendor: string
     productSku?: string
   }
+  /**
+   * Optional. Set by the agent when it had to bridge an email mismatch via
+   * ClickBank vendorVariables.cId. The executor re-runs the gate with this
+   * value so the bridge is re-verified at execution time, not trusted from
+   * the draft alone.
+   */
+  customer_id_link?: string
   before?: Record<string, unknown>
   after?: Record<string, unknown>
   reasoning: string
@@ -83,6 +90,7 @@ async function executeUpdateOrder(input: ExecuteInput): Promise<ExecuteOutput> {
   const gate = verifyPaymentGate({
     order,
     expected_email: customer_email,
+    expected_customer_id: draft.customer_id_link,
     expected_project: project,
   })
   if (!gate.passed) {

@@ -12,6 +12,7 @@ function makeOrder(overrides: Partial<ClickBankOrder> = {}): ClickBankOrder {
     product_sku: 'abdt-advanced',
     transaction_type: 'SALE',
     transaction_date: '2026-06-15',
+    vendor_variables: {},
     raw: {},
     ...overrides,
   }
@@ -123,6 +124,52 @@ describe('verifyPaymentGate', () => {
     })
     expect(result.passed).toBe(false)
     expect(result.details.resolved_project).toBeNull()
+  })
+
+  it('bridges an email mismatch when expected_customer_id matches order.customer_id', () => {
+    const result = verifyPaymentGate({
+      order: makeOrder({
+        email: 'paypal-alt@example.com',
+        customer_id: 'cust_42',
+      }),
+      expected_email: 'jane@example.com',
+      expected_customer_id: 'cust_42',
+      expected_project: 'asksabrina',
+    })
+    expect(result.passed).toBe(true)
+    expect(result.failures).toEqual([])
+    expect(result.details.email_matches).toBe(false)
+    expect(result.details.customer_id_bridge_matched).toBe(true)
+    expect(result.warnings.length).toBe(1)
+    expect(result.warnings[0]).toMatch(/identity verified via customer_id="cust_42"/)
+  })
+
+  it('still fails when expected_customer_id is provided but does not match', () => {
+    const result = verifyPaymentGate({
+      order: makeOrder({
+        email: 'paypal-alt@example.com',
+        customer_id: 'cust_42',
+      }),
+      expected_email: 'jane@example.com',
+      expected_customer_id: 'cust_OTHER',
+      expected_project: 'asksabrina',
+    })
+    expect(result.passed).toBe(false)
+    expect(result.failures.some((f) => f.includes('customer_id bridge also did not match'))).toBe(true)
+  })
+
+  it('still fails when expected_customer_id is provided but order has no customer_id', () => {
+    const result = verifyPaymentGate({
+      order: makeOrder({
+        email: 'paypal-alt@example.com',
+        // customer_id intentionally missing
+      }),
+      expected_email: 'jane@example.com',
+      expected_customer_id: 'cust_42',
+      expected_project: 'asksabrina',
+    })
+    expect(result.passed).toBe(false)
+    expect(result.details.customer_id_bridge_matched).toBe(false)
   })
 
   it('reports multiple failures at once', () => {

@@ -32,24 +32,55 @@ you own the data fix.
 
 ## The 90% pattern: "paid but inaccessible"
 
-1. Search for the customer's order across all kinds (main, oto1, oto2, subscription).
-2. If order found AND `paymentStatus = 0`:
-   - Verify ClickBank receipt is real via `clickbank.verifyReceipt`.
-   - Confirm: receipt email matches customer email, amount > 0, status = `completed`, product SKU maps to the project.
-   - Draft action: update `paymentStatus = 1`, attach `payment_meta` from the receipt.
+1. If you have a ClickBank receipt, call `resolve_customer_identity` FIRST.
+   - It tries receipt-lookup → cId-lookup → payment-email-lookup in order.
+   - It returns the resolved `customer_view`, the `payment_email` from ClickBank,
+     the `optin_email` from the customer record, and an `email_mismatch` flag.
+   - When `email_mismatch=true`, the customer paid with a different email than
+     they signed up with. This is common (PayPal alt email, family card, etc.)
+     and is NOT fraud on its own.
+   - Use the resolved `customer_view.customer.id` going forward as the canonical
+     identifier. The `customer_view.customer.id` is what you'll pass to
+     `verify_clickbank_receipt` as `expected_customer_id` and to `propose_action`
+     as `customer_id_link`.
+2. Then search the customer's products (main, oto1, oto2, subscription) from
+   the resolved view.
+3. If order found AND `paymentStatus = 0`:
+   - Verify the ClickBank receipt via `verify_clickbank_receipt`. Pass
+     `expected_customer_id` whenever `email_mismatch=true` from step 1 so the
+     gate bridges identity via the cId vendor variable instead of rejecting
+     the email mismatch.
+   - Confirm: gate passes (transaction type SALE/BILL, amount > 0, vendor maps
+     to the project, identity matches via email or via cId bridge).
+   - Draft action: update `paymentStatus = 1`, attach `payment_meta` from the
+     receipt, set `customer_id_link` when the identity bridge was used so the
+     executor can re-verify it.
    - Then propose regenerate.
-3. If order found AND `paymentStatus = 1` (already marked paid):
+4. If order found AND `paymentStatus = 1` (already marked paid):
    - Likely a generation failure, not a payment failure.
    - Draft action: regenerate only.
-4. If order NOT found:
+5. If order NOT found:
    - Search ClickBank by email — does the customer have a receipt for this product?
    - If yes: edge case. Draft creating a new order. **Always escalate to human, never auto-execute.**
    - If no: customer may be confused, or this may be fraud. Escalate to human with the data you found.
 
+### When only a `contact_id` is present (no `cId`)
+
+ClickBank orders coming from a Maropost funnel carry `contact_id` in
+`vendor_variables` but no `cId`. Today the platform cannot turn that
+`contact_id` into an email automatically (Maropost connector is pending).
+If `resolve_customer_identity` returns `contact_id` but no `customer_view`,
+escalate with the data — include the `contact_id` in the summary so a human
+can look it up in Maropost manually.
+
 ## Gates (you must pass before proposing any action)
 
-- ClickBank receipt verified (real, status `completed`, not refunded)
-- Receipt email matches customer email (case-insensitive, trimmed)
+- ClickBank receipt verified (real, transaction type SALE/BILL, not refunded)
+- Identity verified — either the receipt email matches the customer email
+  (case-insensitive, trimmed), OR the resolved `customer_id` (from ClickBank
+  `vendorVariables.cId`) matches the optin customer record. The cId bridge
+  exists because payment email and optin email legitimately differ in ~15% of
+  recoveries; rejecting on email alone causes false negatives.
 - Receipt product SKU maps to the same project as the ticket
 - No prior successful action on this ticket (check `idempotency_keys`)
 

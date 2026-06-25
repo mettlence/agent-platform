@@ -173,15 +173,89 @@ async function dispatchTool(
       }
 
       case 'verify_clickbank_receipt': {
-        const { receipt } = input as { receipt: string }
+        const { receipt, expected_customer_id } = input as {
+          receipt: string
+          expected_customer_id?: string
+        }
         const order = await clickbank.getOrderByReceipt(receipt)
         if (!order) return { output: { found: false } }
         const gate = verifyPaymentGate({
           order,
           expected_email: ctx.customer_email,
+          expected_customer_id,
           expected_project: ctx.project,
         })
         return { output: { order, gate } }
+      }
+
+      case 'resolve_customer_identity': {
+        const { project, receipt } = input as { project: Project; query?: string; receipt: string }
+        if (project !== ctx.project) {
+          return { output: { error: 'project mismatch' }, is_error: true }
+        }
+        if (project !== 'asksabrina') {
+          return { output: { error: 'project not implemented' }, is_error: true }
+        }
+
+        // Step 1: direct receipt lookup at the project. Works when the receipt
+        // is already linked to a customer record (typical when order processing
+        // failed but receipt was recorded).
+        let view = await asksabrina.lookupCustomer(receipt)
+        let matchedVia: string | null = view ? 'receipt' : null
+
+        // Step 2: fetch the ClickBank order so we have vendor_variables either
+        // way — even if we matched on receipt, the agent and the gate need the
+        // cId/contact_id to verify and to bridge identity later.
+        const order = await clickbank.getOrderByReceipt(receipt)
+        if (!order) {
+          return {
+            output: {
+              found: !!view,
+              matched_via: matchedVia,
+              customer_view: view,
+              payment_email: null,
+              optin_email: view?.customer.email ?? null,
+              customer_id: null,
+              contact_id: null,
+              vendor_variables: {},
+              email_mismatch: false,
+              note: 'ClickBank order not found — receipt may be invalid or for a different vendor',
+            },
+            is_error: !view,
+          }
+        }
+
+        // Step 3: if step 1 missed, try cId from vendor variables.
+        if (!view && order.customer_id) {
+          view = await asksabrina.lookupCustomer(order.customer_id)
+          if (view) matchedVia = 'customer_id'
+        }
+
+        // Step 4: if still missing, try the ClickBank payment email.
+        if (!view) {
+          view = await asksabrina.lookupCustomer(order.email)
+          if (view) matchedVia = 'payment_email'
+        }
+
+        const optinEmail = view?.customer.email ?? null
+        const emailMismatch = !!optinEmail && optinEmail.toLowerCase().trim() !== order.email
+
+        return {
+          output: {
+            found: !!view,
+            matched_via: matchedVia ?? 'unmatched',
+            customer_view: view,
+            payment_email: order.email,
+            optin_email: optinEmail,
+            customer_id: order.customer_id ?? null,
+            contact_id: order.contact_id ?? null,
+            vendor_variables: order.vendor_variables,
+            email_mismatch: emailMismatch,
+            ...(order.contact_id && !view
+              ? { note: 'no asksabrina match — contact_id present, future Maropost lookup can resolve to optin email' }
+              : {}),
+          },
+        }
       }
 
       case 'find_clickbank_receipts_by_email': {
