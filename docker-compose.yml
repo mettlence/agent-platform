@@ -1,0 +1,23 @@
+services:
+  agent-platform:
+    image: ghcr.io/mettlence/agent-platform:latest
+    container_name: agent-platform
+    restart: unless-stopped
+    pull_policy: always
+    env_file:
+      - .env
+    ports:
+      - "127.0.0.1:3000:3000"      # bind localhost only; expose via nginx
+    volumes:
+      - ./logs:/app/logs
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:3000/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"

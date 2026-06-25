@@ -1,0 +1,13 @@
+# Local docker dev — builds from source instead of pulling from GHCR.
+# Use: docker compose -f docker-compose.dev.yml up
+services:
+  agent-platform:
+    build: .
+    image: agent-platform:dev
+    container_name: agent-platform-dev
+    env_file:
+      - .env
+    ports:
+      - "127.0.0.1:3000:3000"
+    volumes:
+      - ./logs:/app/logs
