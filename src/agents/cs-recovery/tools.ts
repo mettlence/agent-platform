@@ -144,7 +144,11 @@ export const csRecoveryTools: Tool[] = [
       type: 'object',
       properties: {
         reason: { type: 'string', description: 'one-line summary of why' },
-        summary: { type: 'string', description: 'what you investigated and what you found' },
+        summary: {
+          type: 'string',
+          description:
+            'What you investigated and what you found. Format as readable Discord markdown following the escalation template in your skill: bold field labels, one line per field. ALWAYS include both readingUrl AND downloadUrl when they exist on the resolved product — CS workflows differ on which one to send.',
+        },
         suggested_next_step: { type: 'string', description: 'optional: what a human should do next' },
       },
       required: ['reason', 'summary'],

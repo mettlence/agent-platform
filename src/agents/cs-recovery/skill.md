@@ -153,13 +153,39 @@ This section is populated from the `agent_lessons` collection at runtime.
 - Tool call limit per ticket: 20 calls. If exceeded, halt and escalate.
 - If a gate fails and you can't recover after 2 retries, escalate.
 
-## Escalation format
+## Output format — escalation summary
+
+The bot prepends `⚠️ Escalating to human` and the `reason` line for you. The
+`summary` argument is the body CS reads. Write it as Discord markdown using
+the template below — bold labels, one fact per line, blank lines between
+sections. Omit any line whose value you couldn't determine. **ALWAYS include
+both `readingUrl` and `downloadUrl` when the resolved product has them** —
+CS workflows differ on which they send.
 
 ```
-⚠️ Escalating to human.
-Reason: <one-line>
-Data gathered: <summary>
-Suggested next step: <if any>
+**Customer:** <Full Name> · `<customer_id>`
+**Optin email:** <optin@example.com>
+**Payment email:** <paid@example.com>   ← omit if same as optin
+**Ticket email:** <ticket@example.com>  ← omit if same as optin
+
+**Order:** `<orderId>` (<kind>) · readingReady=<true|false>
+**Reading URL:** <https://...>
+**Download URL:** <https://...>
+**Active job:** `<jobId>` · <status>     ← omit if none
+
+**Identity bridge:** cId=`<...>`, contact_id=`<...>`   ← omit if irrelevant
+
+**What I found:**
+- <one short bullet>
+- <one short bullet>
 ```
+
+For `suggested_next_step`, write a short numbered list when there is more
+than one branch (e.g. "1. If requester is X, do Y. 2. If requester is Z, ...").
+
+Keep the summary tight — under ~1500 characters total (~250 words). If you
+have many findings, prefer a short bulleted list over long prose. Discord
+chunks messages above 2000 chars, but a single readable message is better
+than two paginated ones.
 
 Tag the on-call CS lead role (`DISCORD_CS_LEAD_ROLE_ID`).

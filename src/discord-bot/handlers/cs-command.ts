@@ -1,6 +1,6 @@
 import type { Message } from 'discord.js'
 import { runCsRecovery } from '@/agents/cs-recovery/index.js'
-import { createThreadFromMessage } from '@/shared/connectors/discord.js'
+import { createThreadFromMessage, sendToThread } from '@/shared/connectors/discord.js'
 import { attachDiscordMessageId } from '@/shared/state/approvals.js'
 
 /**
@@ -30,7 +30,7 @@ export async function handleCsCommand(message: Message, args: string[]): Promise
   }
 
   const thread = await createThreadFromMessage(message, `${ticketId} · cs-recovery`)
-  await thread.send(`🤖 Investigating ticket **${ticketId}** for **${email}** (project: ${project})...`)
+  await sendToThread(thread, `🤖 Investigating ticket **${ticketId}** for **${email}** (project: ${project})...`)
 
   const result = await runCsRecovery({
     thread_id: thread.id,
@@ -44,23 +44,27 @@ export async function handleCsCommand(message: Message, args: string[]): Promise
   })
 
   if (result.status === 'drafted' && result.draft && result.approval_id) {
-    const draftMessage = await thread.send(formatDraft(result.draft))
+    const draftMessage = await sendToThread(thread, formatDraft(result.draft))
     await attachDiscordMessageId(result.approval_id, draftMessage.id)
     await draftMessage.react('✅')
     await draftMessage.react('❌')
   } else if (result.status === 'escalated' && result.escalation) {
-    await thread.send(
+    await sendToThread(
+      thread,
       [
         `⚠️ **Escalating to human**`,
-        `Reason: ${result.escalation.reason}`,
+        `**Reason:** ${result.escalation.reason}`,
+        '',
         result.escalation.summary,
-        result.escalation.suggested_next_step ? `\nSuggested next step: ${result.escalation.suggested_next_step}` : '',
+        result.escalation.suggested_next_step
+          ? `\n**Suggested next step:**\n${result.escalation.suggested_next_step}`
+          : '',
       ]
         .filter(Boolean)
         .join('\n'),
     )
   } else if (result.status === 'error') {
-    await thread.send(`❌ Error: \`${result.error}\``)
+    await sendToThread(thread, `❌ Error: \`${result.error}\``)
   }
 }
 
