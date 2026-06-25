@@ -177,6 +177,63 @@ export async function markOrderPaid(input: MarkOrderPaidInput): Promise<MarkOrde
   return (await res.json()) as MarkOrderPaidResponse
 }
 
+/**
+ * Create a missing order on an existing customer record. Used when a valid
+ * ClickBank receipt exists but the corresponding order row was never written
+ * to asksabrina's DB (funnel handler dropped it / race condition).
+ *
+ * Server contract (POST /create-order):
+ *  - Idempotent on `paymentMeta.clickbankReceipt` — same receipt twice
+ *    returns 409 with `{ existing_ref }` and is treated as failure here so
+ *    callers can compare against their idempotency_keys table.
+ *  - Validates customerId exists; 404 if not.
+ *  - For `kind: 'subscription'`, creates an active subscription record with
+ *    `questions: []` (customer fills them later).
+ *  - For `kind: 'main' | 'oto1' | 'oto2'`, creates the order row only;
+ *    caller is expected to chain `ensureReading(ref, kind)` for delivery.
+ *  - Returns `{ ok, ref, kind, before: null, after: <created> }`.
+ */
+export interface CreateOrderInput {
+  customerId: string
+  kind: OrderKind
+  paymentMeta: {
+    clickbankReceipt: string
+    amount: number
+    currency: string
+    transactionDate: string
+    vendor: string
+    productSku?: string
+  }
+}
+
+export interface CreateOrderResponse {
+  ok: true
+  ref: string
+  kind: OrderKind
+  before: null
+  after: Record<string, unknown>
+}
+
+export async function createOrder(input: CreateOrderInput): Promise<CreateOrderResponse> {
+  const res = await fetch(`${env.ASKSABRINA_API_BASE}/create-order`, {
+    method: 'POST',
+    headers: headers(),
+    body: JSON.stringify(input),
+  })
+  if (res.status === 409) {
+    const body = (await res.json().catch(() => ({}))) as { existing_ref?: string; error?: string }
+    throw new Error(
+      `asksabrina createOrder: receipt already has an order${
+        body.existing_ref ? ` (ref=${body.existing_ref})` : ''
+      }`,
+    )
+  }
+  if (!res.ok) {
+    throw new Error(`asksabrina createOrder failed: ${res.status} ${await res.text()}`)
+  }
+  return (await res.json()) as CreateOrderResponse
+}
+
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms))
 }

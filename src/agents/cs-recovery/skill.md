@@ -61,13 +61,17 @@ you own the data fix.
    - Draft action: regenerate only.
 5. If order NOT found on the resolved record:
    - Search ClickBank by email (`find_clickbank_receipts_by_email`).
-   - If the receipts contain MORE THAN ONE distinct cId, the customer is
-     fragmented across asksabrina records — see "Fragmented customer records"
-     below before concluding the order doesn't exist.
-   - If receipts exist and all share one cId: edge case. Draft creating a new
-     order. **Always escalate to human, never auto-execute.**
-   - If no receipts at all: customer may be confused, or this may be fraud.
-     Escalate to human with the data you found.
+   - If receipts contain MORE THAN ONE distinct cId, the customer is fragmented
+     — see "Fragmented customer records" below to find the right record before
+     deciding.
+   - If a valid receipt exists and matches a customer record (directly or via
+     cId), but the corresponding order row is missing on that record: **draft
+     `create_order`**. This is the recovery agent's primary job. Pass the
+     `payment_meta` from the receipt and `customer_id` of the resolved record.
+     For subscription, the gate also re-checks `isSubscriptionActive` at
+     execution time so a between-draft-and-✅ cancellation is caught.
+   - If no receipts at all for the email at ClickBank: customer may be
+     confused, or this may be fraud. Escalate with the data you found.
 
 ### Fragmented customer records
 
@@ -91,9 +95,9 @@ When this happens:
    doesn't name a receipt, look across all records for the most recent
    purchase whose reading is not yet ready.
 3. If a receipt's cId matches a record but that record has no order for
-   the receipt's product, the order failed creation entirely. Escalate
-   with both the receipt detail and the orphan record so a human can
-   decide whether to manually create the order or merge records.
+   the receipt's product, the order failed creation entirely. **Draft
+   `create_order`** against that record using the receipt's `payment_meta`
+   and the record's `customer_id`. This is the canonical recovery case.
 4. Receipts listed in `receipts_unresolved` had cId values that didn't
    resolve to any asksabrina record (likely archived); receipts in
    `receipts_without_cid` had no cId at all (Maropost funnel). Escalate
@@ -159,12 +163,15 @@ can look it up in Maropost manually.
   exists because payment email and optin email legitimately differ in ~15% of
   recoveries; rejecting on email alone causes false negatives.
 - Receipt product SKU maps to the same project as the ticket
+- For `create_order` subscription: ClickBank reports subscription still
+  active (HEAD /orders2/<receipt> returns 204). Re-checked at execution time
+  so a cancellation between draft and ✅ blocks the create.
 - No prior successful action on this ticket (check `idempotency_keys`)
 
 ## What you must NEVER do without explicit human approval
 
 - Mark an order paid without a verified ClickBank receipt
-- Create a new order from scratch
+- Create a new order without a verified ClickBank receipt + matching customer record
 - Issue refunds (escalate to CS — refunds are not your job)
 - Modify orders for products from a different project than the ticket states
 - Take action on tickets older than 60 days (likely already disputed or charged back — route to manual review)

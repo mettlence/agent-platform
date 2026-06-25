@@ -93,7 +93,7 @@ export const csRecoveryTools: Tool[] = [
   {
     name: 'propose_action',
     description:
-      'Draft an action for human approval. Posts the proposal in the Discord thread; a human reacts ✅ to execute or ❌ to skip. Use this for any DB mutation: update_order (mark-paid), regenerate, or create_order. Do NOT execute directly.',
+      'Draft an action for human approval. Posts the proposal in the Discord thread; a human reacts ✅ to execute or ❌ to skip. Use this for any DB mutation: update_order (mark-paid an existing order), regenerate (re-run delivery), or create_order (insert a missing order when ClickBank has a valid receipt but the asksabrina row was never written). All three execute automatically on ✅; gates re-run at execution time. Do NOT execute directly.',
     input_schema: {
       type: 'object',
       properties: {
@@ -104,7 +104,13 @@ export const csRecoveryTools: Tool[] = [
         project: { type: 'string', enum: ['asksabrina', 'astroloversketch'] },
         ref: {
           type: 'string',
-          description: 'Mongo _id of the order to act on (use the ref from lookup_customer)',
+          description:
+            'Required for update_order and regenerate — mongo _id of the existing order. Omit for create_order (no row exists yet); use customer_id instead.',
+        },
+        customer_id: {
+          type: 'string',
+          description:
+            'Required for create_order — the target asksabrina customer.id from resolve_customer_identity or find_all_customer_records. For update_order it is OPTIONAL and acts as an identity bridge: when set, the gate tolerates a payment/optin email mismatch as long as ClickBank.vendorVariables.cId matches.',
         },
         order_kind: {
           type: 'string',
@@ -113,7 +119,7 @@ export const csRecoveryTools: Tool[] = [
         payment_meta: {
           type: 'object',
           description:
-            'Required for update_order. Source these fields from the verified ClickBank order: { clickbankReceipt, amount, currency, transactionDate, vendor, productSku }',
+            'Required for update_order AND create_order. Source these fields from the verified ClickBank order: { clickbankReceipt, amount, currency, transactionDate, vendor, productSku }',
           properties: {
             clickbankReceipt: { type: 'string' },
             amount: { type: 'number' },
@@ -123,14 +129,9 @@ export const csRecoveryTools: Tool[] = [
             productSku: { type: 'string' },
           },
         },
-        customer_id_link: {
-          type: 'string',
-          description:
-            'Optional. The asksabrina customer.id used to bridge identity when the ClickBank payment email differs from the optin email. The executor re-runs the gate with this value so the email mismatch is tolerated only when ClickBank.vendorVariables.cId matches.',
-        },
         before: {
           type: 'object',
-          description: 'Snapshot of the order state before the proposed change (for audit log).',
+          description: 'Snapshot of the order state before the proposed change (for audit log). Null for create_order.',
         },
         after: {
           type: 'object',
@@ -143,10 +144,10 @@ export const csRecoveryTools: Tool[] = [
         gates_passed: {
           type: 'array',
           items: { type: 'string' },
-          description: 'Named gates that returned passed=true (e.g. "clickbank.transaction_type_ok", "clickbank.identity_via_cId").',
+          description: 'Named gates that returned passed=true (e.g. "clickbank.transaction_type_ok", "clickbank.identity_via_cId", "clickbank.subscription_active").',
         },
       },
-      required: ['action_type', 'project', 'ref', 'order_kind', 'reasoning', 'gates_passed'],
+      required: ['action_type', 'project', 'order_kind', 'reasoning', 'gates_passed'],
     },
   },
   {

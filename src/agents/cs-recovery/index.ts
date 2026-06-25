@@ -362,6 +362,36 @@ async function dispatchTool(
       }
 
       case 'propose_action': {
+        const draft = input as {
+          action_type?: string
+          ref?: string
+          customer_id?: string
+          payment_meta?: Record<string, unknown>
+        }
+        if (draft.action_type === 'create_order') {
+          if (!draft.customer_id) {
+            return {
+              output: {
+                error:
+                  'create_order requires customer_id (the target asksabrina customer.id from resolve_customer_identity or find_all_customer_records)',
+              },
+              is_error: true,
+            }
+          }
+          if (!draft.payment_meta) {
+            return {
+              output: { error: 'create_order requires payment_meta sourced from the verified ClickBank receipt' },
+              is_error: true,
+            }
+          }
+        } else if (draft.action_type === 'update_order' || draft.action_type === 'regenerate') {
+          if (!draft.ref) {
+            return {
+              output: { error: `${draft.action_type} requires ref (the existing order's mongo _id)` },
+              is_error: true,
+            }
+          }
+        }
         return { output: { drafted: true }, draft: input }
       }
 
