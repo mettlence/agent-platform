@@ -25,10 +25,12 @@ export interface RunInput {
 }
 
 export interface RunOutput {
-  status: 'drafted' | 'escalated' | 'error'
+  status: 'drafted' | 'escalated' | 'noop' | 'error'
   draft?: Record<string, unknown>
   approval_id?: ObjectId
   escalation?: { reason: string; summary: string; suggested_next_step?: string }
+  /** Agent concluded no action was needed; this is the prose it produced. */
+  noop_message?: string
   error?: string
   tokens_used?: number
 }
@@ -95,13 +97,20 @@ export async function runCsRecovery(input: RunInput): Promise<RunOutput> {
     await appendMessage(input.thread_id, { role: 'assistant', content: response.content })
 
     if (response.stop_reason === 'end_turn') {
-      // Surface any text the model produced even if it didn't tool-call.
+      // The model concluded its investigation without calling propose_action
+      // or escalate_to_human. If it explained why in trailing prose, surface
+      // that to CS as an informational outcome — common case is "nothing to
+      // fix" (e.g. re-running !cs after a successful recovery). Only treat
+      // it as an error when the model went silent entirely.
       const trailingText = response.content
         .filter((b): b is { type: 'text'; text: string } => b.type === 'text')
         .map((b) => b.text)
         .join('\n')
-      if (trailingText) await postToThread(input.thread_id, trailingText)
-      return { status: 'error', error: 'agent ended without action', tokens_used: totalTokens }
+        .trim()
+      if (trailingText) {
+        return { status: 'noop', noop_message: trailingText, tokens_used: totalTokens }
+      }
+      return { status: 'error', error: 'agent ended without action or message', tokens_used: totalTokens }
     }
 
     if (response.stop_reason !== 'tool_use') continue

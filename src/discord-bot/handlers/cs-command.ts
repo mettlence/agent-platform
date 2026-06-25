@@ -63,6 +63,8 @@ export async function handleCsCommand(message: Message, args: string[]): Promise
         .filter(Boolean)
         .join('\n'),
     )
+  } else if (result.status === 'noop' && result.noop_message) {
+    await sendToThread(thread, [`ℹ️ **No action needed**`, '', result.noop_message].join('\n'))
   } else if (result.status === 'error') {
     await sendToThread(thread, `❌ Error: \`${result.error}\``)
   }
