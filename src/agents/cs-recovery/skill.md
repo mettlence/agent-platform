@@ -49,12 +49,17 @@ you own the data fix.
    - Verify the ClickBank receipt via `verify_clickbank_receipt`. Pass
      `expected_customer_id` whenever `email_mismatch=true` from step 1 so the
      gate bridges identity via the cId vendor variable instead of rejecting
-     the email mismatch.
+     the email mismatch. If `customer_id` (cId) is missing from
+     `vendor_variables` AND step 1 returned `matched_via="payment_email"`,
+     also pass `identity_via_receipt_email=true` — the gate uses the
+     receipt-email → DB lookup as a last-resort bridge.
    - Confirm: gate passes (transaction type SALE/BILL, amount > 0, vendor maps
-     to the project, identity matches via email or via cId bridge).
+     to the project, identity matches via email / cId bridge / receipt-email
+     bridge).
    - Draft action: update `paymentStatus = 1`, attach `payment_meta` from the
-     receipt, set `customer_id_link` when the identity bridge was used so the
-     executor can re-verify it.
+     receipt, set `customer_id` when any identity bridge was used so the
+     executor can re-verify it; mirror `identity_via_receipt_email` onto the
+     draft when that bridge was used.
    - Then propose regenerate.
 4. If order found AND `paymentStatus = 1` (already marked paid):
    - Likely a generation failure, not a payment failure.
@@ -171,11 +176,26 @@ can look it up in Maropost manually.
 ## Gates (you must pass before proposing any action)
 
 - ClickBank receipt verified (real, transaction type SALE/BILL, not refunded)
-- Identity verified — either the receipt email matches the customer email
-  (case-insensitive, trimmed), OR the resolved `customer_id` (from ClickBank
-  `vendorVariables.cId`) matches the optin customer record. The cId bridge
-  exists because payment email and optin email legitimately differ in ~15% of
-  recoveries; rejecting on email alone causes false negatives.
+- Identity verified via one of three bridges, in priority order:
+  1. **email match** — receipt billing email equals the ticket/optin email
+     (case-insensitive, trimmed). Cheapest and strongest signal.
+  2. **cId bridge** — ClickBank `vendorVariables.cId` matches the resolved
+     customer record. Common on v2 funnels; tolerates legitimate
+     payment-email vs optin-email mismatch (~15% of recoveries).
+  3. **receipt-email bridge** (last resort) — ClickBank carries no cId,
+     and the receipt billing email resolves to a customer record in the
+     project DB via `resolve_customer_identity` (`matched_via="payment_email"`).
+     To use this, call `verify_clickbank_receipt` with both
+     `expected_customer_id` AND `identity_via_receipt_email=true`, then
+     mirror the flag onto `propose_action`. The gate passes with a warning
+     that names both emails and the resolved customer_id; the warning is
+     captured in the audit log. **Use only when bridge 2 is unavailable.**
+
+  When bridge 2 or 3 is used, the draft `reasoning` MUST explicitly list:
+  the ticket/optin email, the receipt billing email, the resolved customer
+  (name + id), and one sentence on why the approver should still believe
+  it's the same person. The human approval is the actual safety net —
+  don't bury the discrepancy.
 - Receipt product SKU maps to the same project as the ticket
 - For `create_order` subscription: the freshly-fetched ClickBank transaction
   type is SALE or BILL (the same gate, re-run defensively at execution time).

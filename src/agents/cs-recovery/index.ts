@@ -182,9 +182,10 @@ async function dispatchTool(
       }
 
       case 'verify_clickbank_receipt': {
-        const { receipt, expected_customer_id } = input as {
+        const { receipt, expected_customer_id, identity_via_receipt_email } = input as {
           receipt: string
           expected_customer_id?: string
+          identity_via_receipt_email?: boolean
         }
         const order = await clickbank.getOrderByReceipt(receipt)
         if (!order) return { output: { found: false } }
@@ -192,6 +193,7 @@ async function dispatchTool(
           order,
           expected_email: ctx.customer_email,
           expected_customer_id,
+          identity_via_receipt_email,
           expected_project: ctx.project,
         })
         return { output: { order, gate } }

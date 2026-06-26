@@ -172,6 +172,71 @@ describe('verifyPaymentGate', () => {
     expect(result.details.customer_id_bridge_matched).toBe(false)
   })
 
+  it('bridges via receipt-email when cId is missing but expected_customer_id is provided', () => {
+    const result = verifyPaymentGate({
+      order: makeOrder({
+        email: 'paid-with-this@example.com',
+        // customer_id intentionally absent — common on OTO funnel receipts
+      }),
+      expected_email: 'ticket-says-this@example.com',
+      expected_customer_id: 'cust_kathryn',
+      identity_via_receipt_email: true,
+      expected_project: 'asksabrina',
+    })
+    expect(result.passed).toBe(true)
+    expect(result.failures).toEqual([])
+    expect(result.details.email_matches).toBe(false)
+    expect(result.details.customer_id_bridge_matched).toBe(false)
+    expect(result.details.receipt_email_bridge_used).toBe(true)
+    expect(result.warnings.length).toBe(1)
+    expect(result.warnings[0]).toMatch(/paid-with-this@example\.com/)
+    expect(result.warnings[0]).toMatch(/ticket-says-this@example\.com/)
+    expect(result.warnings[0]).toMatch(/cust_kathryn/)
+  })
+
+  it('prefers cId bridge over receipt-email bridge when both signals are present', () => {
+    const result = verifyPaymentGate({
+      order: makeOrder({
+        email: 'paid-with-this@example.com',
+        customer_id: 'cust_kathryn',
+      }),
+      expected_email: 'ticket-says-this@example.com',
+      expected_customer_id: 'cust_kathryn',
+      identity_via_receipt_email: true,
+      expected_project: 'asksabrina',
+    })
+    expect(result.passed).toBe(true)
+    expect(result.details.customer_id_bridge_matched).toBe(true)
+    expect(result.details.receipt_email_bridge_used).toBe(false)
+    expect(result.warnings[0]).toMatch(/identity verified via customer_id="cust_kathryn"/)
+  })
+
+  it('does not engage the receipt-email bridge when expected_customer_id is missing', () => {
+    const result = verifyPaymentGate({
+      order: makeOrder({ email: 'paid-with-this@example.com' }),
+      expected_email: 'ticket-says-this@example.com',
+      identity_via_receipt_email: true,
+      expected_project: 'asksabrina',
+    })
+    expect(result.passed).toBe(false)
+    expect(result.details.receipt_email_bridge_used).toBe(false)
+    expect(result.failures[0]).toMatch(/receipt-email bridge requires expected_customer_id/)
+  })
+
+  it('does not engage the receipt-email bridge when ticket email already matches', () => {
+    const result = verifyPaymentGate({
+      order: makeOrder({ email: 'same@example.com' }),
+      expected_email: 'same@example.com',
+      expected_customer_id: 'cust_42',
+      identity_via_receipt_email: true,
+      expected_project: 'asksabrina',
+    })
+    expect(result.passed).toBe(true)
+    expect(result.details.email_matches).toBe(true)
+    expect(result.details.receipt_email_bridge_used).toBe(false)
+    expect(result.warnings).toEqual([])
+  })
+
   it('reports multiple failures at once', () => {
     const result = verifyPaymentGate({
       order: makeOrder({

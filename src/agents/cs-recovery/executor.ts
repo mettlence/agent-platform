@@ -37,10 +37,19 @@ export interface DraftAction {
    * (identifies which customer record to create the order on). For `update_order`
    * it is optional and acts as an identity bridge: when set, the gate tolerates a
    * payment-email vs optin-email mismatch as long as ClickBank's `vendorVariables.cId`
-   * matches this value. The executor re-verifies the bridge at execution time —
-   * never trusted from the draft alone.
+   * matches this value (cId bridge), OR `identity_via_receipt_email` is also set
+   * (receipt-email bridge). The executor re-verifies the bridge at execution
+   * time — never trusted from the draft alone.
    */
   customer_id?: string
+  /**
+   * When true, the gate accepts the receipt's billing email → DB customer
+   * lookup as the identity bridge. Set by the agent only when (a) no cId is
+   * present in ClickBank vendor variables and (b) `customer_id` was resolved
+   * by looking up the receipt billing email in the project DB. Re-applied at
+   * execute-time gate; the audit log captures it for review.
+   */
+  identity_via_receipt_email?: boolean
   /**
    * Required for `create_order` with kind oto1 / oto2 / subscription — the
    * mongo _id of the main Order this row links to. Backend rejects with 400
@@ -126,6 +135,7 @@ async function executeUpdateOrder(input: ExecuteInput): Promise<ExecuteOutput> {
     order,
     expected_email: customer_email,
     expected_customer_id: draft.customer_id,
+    identity_via_receipt_email: draft.identity_via_receipt_email,
     expected_project: project,
   })
   if (!gate.passed) {
@@ -318,12 +328,15 @@ async function executeCreateOrder(input: ExecuteInput): Promise<ExecuteOutput> {
   }
 
   // Re-verify ClickBank receipt at execution time. Bridge identity via
-  // customer_id so a payment/optin email mismatch is tolerated.
+  // customer_id so a payment/optin email mismatch is tolerated — either via
+  // the cId vendor variable or, when no cId is present, via the receipt
+  // billing email → DB customer lookup the agent already performed.
   const order = await clickbank.getOrderByReceipt(draft.payment_meta.clickbankReceipt)
   const gate = verifyPaymentGate({
     order,
     expected_email: customer_email,
     expected_customer_id: draft.customer_id,
+    identity_via_receipt_email: draft.identity_via_receipt_email,
     expected_project: project,
   })
   if (!gate.passed) {

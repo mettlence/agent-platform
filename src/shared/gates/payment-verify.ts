@@ -12,6 +12,23 @@ export interface PaymentGateInput {
    * legitimately differ for the same customer.
    */
   expected_customer_id?: string
+  /**
+   * Optional. When true, the caller asserts that `expected_customer_id` was
+   * obtained by looking up the receipt's billing email (`order.email`) in the
+   * project DB. The gate accepts this as a 3rd identity bridge — even when
+   * `vendorVariables.cId` is absent and `expected_email` (ticket/optin) does
+   * not match `order.email`. Requires `expected_customer_id` to be set.
+   *
+   * Trust chain: the agent resolves the customer by receipt billing email
+   * (resolve_customer_identity → matched_via='payment_email'); the human
+   * approving the draft sees the email discrepancy spelled out in the
+   * reasoning; the executor re-runs this gate at mutation time.
+   *
+   * Use only when neither email nor cId can bridge identity — never as the
+   * default. The gate emits a warning that names both emails plus the
+   * resolved customer_id so the audit log captures the trust chain.
+   */
+  identity_via_receipt_email?: boolean
   expected_project: string
   min_amount?: number              // default 0.01
 }
@@ -25,6 +42,7 @@ export interface PaymentGateResult {
     transaction_type_ok?: boolean
     email_matches?: boolean
     customer_id_bridge_matched?: boolean
+    receipt_email_bridge_used?: boolean
     amount_ok?: boolean
     vendor_project_matches?: boolean
     resolved_project?: string | null
@@ -58,29 +76,50 @@ export function verifyPaymentGate(input: PaymentGateInput): PaymentGateResult {
     failures.push(`transaction type is "${o.transaction_type}", expected SALE or BILL`)
   }
 
-  // Identity check: either email matches, OR a resolved customer_id bridges
-  // a legitimate email mismatch (payment email != optin email is common when
-  // customers pay with a different provider than the one they signed up with).
+  // Identity check: pass on any of three signals, in priority order —
+  //   1. ticket/optin email matches the receipt billing email
+  //   2. cId vendor variable matches the resolved customer_id
+  //   3. caller asserts the customer_id was resolved by looking up the
+  //      receipt email in the project DB (last-resort bridge for CB orders
+  //      that carry no cId vendor variable — common on OTO funnels)
+  // Bridges 2 and 3 produce a warning so the trust chain is visible in
+  // the audit log and the approval message.
   const expectedEmail = input.expected_email.toLowerCase().trim()
   const emailMatches = o.email === expectedEmail
   const customerIdBridge =
     !!input.expected_customer_id &&
     !!o.customer_id &&
     o.customer_id === input.expected_customer_id
+  // Receipt-email bridge only engages when the cheaper bridges are unavailable:
+  // not an email match, and either no cId in vendor variables or it didn't
+  // match. The cId path is strictly preferred when both signals exist.
+  const receiptEmailBridge =
+    !!input.identity_via_receipt_email &&
+    !!input.expected_customer_id &&
+    !emailMatches &&
+    !customerIdBridge
 
   details.email_matches = emailMatches
   details.customer_id_bridge_matched = customerIdBridge
+  details.receipt_email_bridge_used = receiptEmailBridge
 
-  if (!emailMatches && !customerIdBridge) {
-    failures.push(
-      `receipt email "${o.email}" does not match expected "${expectedEmail}"` +
-        (input.expected_customer_id
-          ? ` (customer_id bridge also did not match: order.customer_id="${o.customer_id ?? 'unset'}" vs expected "${input.expected_customer_id}")`
-          : ' and no customer_id bridge was provided'),
-    )
+  if (!emailMatches && !customerIdBridge && !receiptEmailBridge) {
+    let msg = `receipt email "${o.email}" does not match expected "${expectedEmail}"`
+    if (input.expected_customer_id) {
+      msg += ` (customer_id bridge also did not match: order.customer_id="${o.customer_id ?? 'unset'}" vs expected "${input.expected_customer_id}")`
+    } else if (input.identity_via_receipt_email) {
+      msg += ' (receipt-email bridge requires expected_customer_id, which was not provided)'
+    } else {
+      msg += ' and no customer_id bridge was provided'
+    }
+    failures.push(msg)
   } else if (!emailMatches && customerIdBridge) {
     warnings.push(
       `payment email "${o.email}" differs from optin email "${expectedEmail}" — identity verified via customer_id="${o.customer_id}"`,
+    )
+  } else if (receiptEmailBridge) {
+    warnings.push(
+      `ticket/optin email "${expectedEmail}" differs from receipt billing email "${o.email}" and ClickBank carries no cId vendor variable — identity established by resolving "${o.email}" against the project DB to customer_id="${input.expected_customer_id}". Approver should confirm this is the correct customer.`,
     )
   }
 
