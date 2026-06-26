@@ -11,8 +11,21 @@ const schema = z.object({
   ANTHROPIC_MODEL: z.string().default('claude-opus-4-7'),
 
   DISCORD_BOT_TOKEN: z.string().min(1),
-  DISCORD_GUILD_ID: z.string().min(1),
-  DISCORD_CS_CHANNEL_ID: z.string().min(1),
+  // CSV of guild (server) IDs the bot will respond in. Single ID also valid.
+  // Discord channel IDs are globally unique snowflakes, so the channel allowlist
+  // below stays flat across guilds — the guild check is a defense-in-depth gate
+  // against the bot being invited to a server we didn't intend to operate in.
+  DISCORD_GUILD_IDS: z
+    .string()
+    .min(1)
+    .transform((v) => v.split(',').map((s) => s.trim()).filter(Boolean))
+    .refine((arr) => arr.length > 0, 'DISCORD_GUILD_IDS must contain at least one ID'),
+  // CSV of channel IDs the bot will respond in. Single ID also valid.
+  DISCORD_CS_CHANNEL_IDS: z
+    .string()
+    .min(1)
+    .transform((v) => v.split(',').map((s) => s.trim()).filter(Boolean))
+    .refine((arr) => arr.length > 0, 'DISCORD_CS_CHANNEL_IDS must contain at least one ID'),
   DISCORD_CS_LEAD_ROLE_ID: z.string().optional(),
 
   // Single ClickBank API key (no separate dev key as of 2023-07-27).
