@@ -1,6 +1,8 @@
 import type { Message } from 'discord.js'
 import { env } from '@/config/env.js'
+import { getDiscordClient } from '@/shared/connectors/discord.js'
 import { handleCsCommand } from './handlers/cs-command.js'
+import { handleMentionCommand } from './handlers/mention-command.js'
 
 const PREFIX = '!'
 
@@ -14,6 +16,13 @@ export async function routeMessage(message: Message): Promise<void> {
   const allowed = env.DISCORD_CS_CHANNEL_IDS
   if (!allowed.includes(channelId) && !(parentId && allowed.includes(parentId))) return
 
+  // Mention path: natural-language trigger. Beats the `!` prefix path so a
+  // message that includes both still routes here — mentions are deliberate.
+  if (isBotMentioned(message)) {
+    await handleMentionCommand(message)
+    return
+  }
+
   if (!message.content.startsWith(PREFIX)) return
   const [cmd, ...args] = message.content.slice(PREFIX.length).trim().split(/\s+/)
 
@@ -25,7 +34,12 @@ export async function routeMessage(message: Message): Promise<void> {
       await message.reply(
         [
           '**agent-platform commands**',
-          '`!cs <ticket-id> email=... [receipt=...] [order=...] [project=asksabrina|astroloversketch] [complaint="..."]` — start a CS recovery flow. Project is auto-detected from `receipt=`; pass `project=` only when no receipt is available.',
+          '`@bot <receipt> [email] [brand]` — natural mention. Any combination works:',
+          '  `@bot ABC12345`     → receipt drives brand + email',
+          '  `@bot jane@x.com`   → email-only; picks brand if customer exists in only one',
+          '  `@bot fix this`     (as a reply) — pulls context from the referenced message + thread history',
+          '',
+          '`!cs <ticket-id> email=... [receipt=...] [project=asksabrina|astroloversketch] [complaint="..."]` — explicit form. Project auto-detected from receipt.',
           '`!help` — show this',
         ].join('\n'),
       )
@@ -34,4 +48,10 @@ export async function routeMessage(message: Message): Promise<void> {
       // ignore unknown commands silently
       return
   }
+}
+
+function isBotMentioned(message: Message): boolean {
+  const selfId = getDiscordClient().user?.id
+  if (!selfId) return false
+  return message.mentions.users.has(selfId)
 }
