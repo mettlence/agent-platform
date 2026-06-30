@@ -7,7 +7,9 @@ import { projectFromVendor } from '@/config/env.js'
 import { PROJECTS, PROJECT_KEYS, type ProjectKey } from '@/config/projects.js'
 import {
   extractAll,
+  extractFreeText,
   mergeTokens,
+  stripDiscordMentions,
   type ExtractedTokens,
 } from '@/discord-bot/extractors.js'
 
@@ -100,6 +102,17 @@ export async function handleMentionCommand(message: Message): Promise<void> {
   const ticketId = tokens.ticketOverride ?? `disc-${message.id}`
   const receipt = tokens.receipts[0]
 
+  // Free-text intent — what's left after the structural tokens. Without
+  // this the agent only sees "Investigate ticket X for customer Y" and
+  // has no signal about WHY the ticket was filed (regenerate / refund /
+  // missing link / etc), so it tends to no-op when nothing's broken.
+  const ownFreeText = extractFreeText(message.content)
+  const contextFreeText =
+    contextSource === 'reply' && message.reference?.messageId
+      ? await safeFetchFreeText(message, message.reference.messageId)
+      : ''
+  const complaintText = [ownFreeText, contextFreeText].filter(Boolean).join(' — ') || undefined
+
   const thread = await createThreadFromMessage(message, `${ticketId} · cs-recovery`)
   await sendToThread(
     thread,
@@ -119,6 +132,7 @@ export async function handleMentionCommand(message: Message): Promise<void> {
     project,
     customer_email: email,
     clickbank_receipt: receipt,
+    complaint_text: complaintText,
     trigger_user_id: message.author.id,
   })
 
@@ -151,6 +165,15 @@ export async function handleMentionCommand(message: Message): Promise<void> {
 
 function hasUsable(t: ExtractedTokens): boolean {
   return t.receipts.length > 0 || t.emails.length > 0
+}
+
+async function safeFetchFreeText(message: Message, refId: string): Promise<string> {
+  try {
+    const ref = await message.channel.messages.fetch(refId)
+    return stripDiscordMentions(ref.content).replace(/\s+/g, ' ').trim()
+  } catch {
+    return ''
+  }
 }
 
 type Resolution =

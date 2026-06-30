@@ -85,6 +85,29 @@ export function extractAll(text: string): ExtractedTokens {
   }
 }
 
+/**
+ * Pull the natural-language request out of a mention by stripping the
+ * structural tokens we already parsed (emails, receipts, ticket= override,
+ * project keywords, discord mentions). What's left is the free-text intent
+ * — "regenerate the reading", "customer didn't get email", etc — which the
+ * agent LLM needs to decide whether/how to act. Empty string when the user
+ * gave us nothing beyond identifiers.
+ */
+export function extractFreeText(text: string): string {
+  let s = stripDiscordMentions(text)
+  s = s.replace(EMAIL_RE, ' ')
+  s = s.replace(/[Tt]icket\s*=\s*[A-Za-z0-9_-]+/g, ' ')
+  s = s.replace(RECEIPT_CORE_RE, (tok) => (/[A-Z]/.test(tok) && /\d/.test(tok) ? ' ' : tok))
+  for (const kw of ALL_PROJECT_KEYWORDS.keys()) {
+    s = s.replace(new RegExp(`\\b${escapeForReplace(kw)}\\b`, 'gi'), ' ')
+  }
+  return s.replace(/\s+/g, ' ').trim()
+}
+
+function escapeForReplace(s: string): string {
+  return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+}
+
 export function mergeTokens(a: ExtractedTokens, b: ExtractedTokens): ExtractedTokens {
   return {
     emails: dedupe([...a.emails, ...b.emails]),
