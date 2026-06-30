@@ -1,6 +1,7 @@
 import { ObjectId } from 'mongodb'
 import * as clickbank from '@/shared/connectors/clickbank.js'
-import * as asksabrina from '@/shared/connectors/asksabrina.js'
+import { getConnector } from '@/config/projects.js'
+import type { OrderKind, UnifiedCustomerView, UnifiedProduct } from '@/shared/connectors/types.js'
 import { verifyPaymentGate } from '@/shared/gates/payment-verify.js'
 import { claim as claimIdempotency } from '@/shared/state/idempotency.js'
 import { recordAction } from '@/shared/state/actions.js'
@@ -166,25 +167,28 @@ async function executeUpdateOrder(input: ExecuteInput): Promise<ExecuteOutput> {
     return { ok: false, error: 'idempotency: this action already executed' }
   }
 
+  const conn = getConnector(project)
+
   try {
-    const result = await asksabrina.markOrderPaid({
+    const result = await conn.markOrderPaid({
       ref: draft.ref,
       kind: draft.order_kind,
       paymentMeta: draft.payment_meta,
     })
 
     // Chain regenerate immediately after mark-paid (the whole point of the action).
-    const ensureRes = await asksabrina.ensureReading(draft.ref, draft.order_kind)
+    const ensureRes = await conn.ensureReading(draft.ref, draft.order_kind)
     let jobId: string | undefined
     let jobPending = false
 
     if (ensureRes.status !== 'already_ready' && ensureRes.jobId) {
       jobId = ensureRes.jobId
-      const finalJob = await asksabrina.waitForJob(ensureRes.jobId, { timeoutMs: 5 * 60 * 1000 })
+      const finalJob = await conn.waitForJob(ensureRes.jobId, { timeoutMs: 5 * 60 * 1000 })
       if (finalJob?.status !== 'done') jobPending = true
     }
 
     const urls = await resolveActionUrls({
+      project,
       customer_email,
       ref: draft.ref,
       kind: draft.order_kind,
@@ -255,18 +259,21 @@ async function executeRegenerate(input: ExecuteInput): Promise<ExecuteOutput> {
     return { ok: false, error: 'idempotency: regenerate already executed' }
   }
 
+  const conn = getConnector(project)
+
   try {
-    const ensureRes = await asksabrina.ensureReading(draft.ref, draft.order_kind)
+    const ensureRes = await conn.ensureReading(draft.ref, draft.order_kind)
     let jobId: string | undefined
     let jobPending = false
 
     if (ensureRes.status !== 'already_ready' && ensureRes.jobId) {
       jobId = ensureRes.jobId
-      const finalJob = await asksabrina.waitForJob(ensureRes.jobId, { timeoutMs: 5 * 60 * 1000 })
+      const finalJob = await conn.waitForJob(ensureRes.jobId, { timeoutMs: 5 * 60 * 1000 })
       if (finalJob?.status !== 'done') jobPending = true
     }
 
     const urls = await resolveActionUrls({
+      project,
       customer_email,
       ref: draft.ref,
       kind: draft.order_kind,
@@ -317,13 +324,21 @@ async function executeCreateOrder(input: ExecuteInput): Promise<ExecuteOutput> {
     return {
       ok: false,
       error:
-        'create_order requires customer_id (the target asksabrina customer.id from resolve_customer_identity / find_all_customer_records)',
+        'create_order requires customer_id (the target customer.id from resolve_customer_identity / find_all_customer_records)',
     }
   }
   if (draft.order_kind !== 'main' && !draft.main_order_id) {
     return {
       ok: false,
       error: `create_order kind=${draft.order_kind} requires main_order_id (the mongo _id of the parent main Order). Backend rejects without it.`,
+    }
+  }
+
+  const conn = getConnector(project)
+  if (draft.order_kind === 'subscription' && !conn.supportsSubscription) {
+    return {
+      ok: false,
+      error: `create_order kind=subscription is not supported on project ${project}.`,
     }
   }
 
@@ -405,10 +420,10 @@ async function executeCreateOrder(input: ExecuteInput): Promise<ExecuteOutput> {
   }
 
   try {
-    const created = await asksabrina.createOrder({
+    const created = await conn.createOrder({
       customerId: draft.customer_id,
       kind: draft.order_kind,
-      paymentMeta: draft.payment_meta,
+      paymentMeta: { ...draft.payment_meta, productSku: draft.payment_meta.productSku ?? '' },
       ...(draft.main_order_id ? { mainOrderId: draft.main_order_id } : {}),
       ...(draft.billing_email ? { billingEmail: draft.billing_email } : {}),
       ...(draft.engine_version ? { engineVersion: draft.engine_version } : {}),
@@ -421,15 +436,16 @@ async function executeCreateOrder(input: ExecuteInput): Promise<ExecuteOutput> {
     let jobPending = false
 
     if (draft.order_kind !== 'subscription') {
-      const ensureRes = await asksabrina.ensureReading(created.ref, draft.order_kind)
+      const ensureRes = await conn.ensureReading(created.ref, draft.order_kind)
       if (ensureRes.status !== 'already_ready' && ensureRes.jobId) {
         jobId = ensureRes.jobId
-        const finalJob = await asksabrina.waitForJob(ensureRes.jobId, { timeoutMs: 5 * 60 * 1000 })
+        const finalJob = await conn.waitForJob(ensureRes.jobId, { timeoutMs: 5 * 60 * 1000 })
         if (finalJob?.status !== 'done') jobPending = true
       }
     }
 
     const urls = await resolveActionUrls({
+      project,
       customer_email,
       ref: created.ref,
       kind: draft.order_kind,
@@ -486,18 +502,6 @@ async function executeCreateOrder(input: ExecuteInput): Promise<ExecuteOutput> {
   }
 }
 
-function findReadingLink(
-  view: asksabrina.AsksabrinaCustomerView | null,
-  ref: string,
-  kind: asksabrina.OrderKind,
-): string | null {
-  if (!view) return null
-  const buckets: asksabrina.AsksabrinaProduct[] =
-    kind === 'main' ? view.mainOrders : kind === 'oto1' ? view.oto1Orders : kind === 'oto2' ? view.oto2Orders : []
-  const match = buckets.find((p) => p.ref === ref)
-  return match?.readingUrl ?? match?.downloadUrl ?? null
-}
-
 /**
  * Pull every URL CS might want to paste, based on what kind of action just
  * succeeded. Main/oto/oto2 surface the reading viewer + download page;
@@ -505,15 +509,16 @@ function findReadingLink(
  * questions) + the parent main order's download page.
  */
 async function resolveActionUrls(opts: {
+  project: Project
   customer_email: string
   ref: string
-  kind: asksabrina.OrderKind
+  kind: OrderKind
 }): Promise<{
   reading_link?: string
   download_link?: string
   question_page_url?: string
 }> {
-  const view = await asksabrina.lookupCustomer(opts.customer_email).catch(() => null)
+  const view = await getConnector(opts.project).lookupCustomer(opts.customer_email).catch(() => null)
   if (!view) return {}
 
   if (opts.kind === 'subscription') {
@@ -525,7 +530,7 @@ async function resolveActionUrls(opts: {
     }
   }
 
-  const buckets: asksabrina.AsksabrinaProduct[] =
+  const buckets: UnifiedProduct[] =
     opts.kind === 'main'
       ? view.mainOrders
       : opts.kind === 'oto1'

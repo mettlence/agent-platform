@@ -4,14 +4,15 @@ import type { Message, ContentBlock } from '@/shared/llm/client.js'
 import { buildSystemPrompt, type SystemPromptOptions } from './prompt.js'
 import { csRecoveryTools } from './tools.js'
 import * as clickbank from '@/shared/connectors/clickbank.js'
-import * as asksabrina from '@/shared/connectors/asksabrina.js'
+import { getConnector, vendorOf, type ProjectKey } from '@/config/projects.js'
+import type { UnifiedCustomerView } from '@/shared/connectors/types.js'
 import { verifyPaymentGate } from '@/shared/gates/payment-verify.js'
 import { appendMessage, createThread, getThread } from '@/shared/state/threads.js'
 import { createApproval } from '@/shared/state/approvals.js'
 import { loadActiveLessons } from '@/shared/state/lessons.js'
 import { postToThread } from '@/shared/connectors/discord.js'
 
-export type Project = 'asksabrina' | 'astroloversketch'
+export type Project = ProjectKey
 
 export interface RunInput {
   thread_id: string                  // discord thread id
@@ -37,11 +38,6 @@ export interface RunOutput {
 
 const MAX_ITERATIONS = 25
 const MAX_TOKENS_PER_RUN = 100_000
-
-const VENDOR_BY_PROJECT: Record<Project, string> = {
-  asksabrina: 'sabrinapsy',
-  astroloversketch: 'astrosketc',
-}
 
 export async function runCsRecovery(input: RunInput): Promise<RunOutput> {
   if (!(await getThread(input.thread_id))) {
@@ -174,11 +170,8 @@ async function dispatchTool(
         if (project !== ctx.project) {
           return { output: { error: 'project mismatch' }, is_error: true }
         }
-        if (project === 'asksabrina') {
-          const view = await asksabrina.lookupCustomer(query)
-          return { output: view ?? { error: 'not_found' }, is_error: !view }
-        }
-        return { output: { error: 'project not implemented' }, is_error: true }
+        const view = await getConnector(project).lookupCustomer(query)
+        return { output: view ?? { error: 'not_found' }, is_error: !view }
       }
 
       case 'verify_clickbank_receipt': {
@@ -204,14 +197,12 @@ async function dispatchTool(
         if (project !== ctx.project) {
           return { output: { error: 'project mismatch' }, is_error: true }
         }
-        if (project !== 'asksabrina') {
-          return { output: { error: 'project not implemented' }, is_error: true }
-        }
+        const conn = getConnector(project)
 
         // Step 1: direct receipt lookup at the project. Works when the receipt
         // is already linked to a customer record (typical when order processing
         // failed but receipt was recorded).
-        let view = await asksabrina.lookupCustomer(receipt)
+        let view = await conn.lookupCustomer(receipt)
         let matchedVia: string | null = view ? 'receipt' : null
 
         // Step 2: fetch the ClickBank order so we have vendor_variables either
@@ -238,13 +229,13 @@ async function dispatchTool(
 
         // Step 3: if step 1 missed, try cId from vendor variables.
         if (!view && order.customer_id) {
-          view = await asksabrina.lookupCustomer(order.customer_id)
+          view = await conn.lookupCustomer(order.customer_id)
           if (view) matchedVia = 'customer_id'
         }
 
         // Step 4: if still missing, try the ClickBank payment email.
         if (!view) {
-          view = await asksabrina.lookupCustomer(order.email)
+          view = await conn.lookupCustomer(order.email)
           if (view) matchedVia = 'payment_email'
         }
 
@@ -263,7 +254,7 @@ async function dispatchTool(
             vendor_variables: order.vendor_variables,
             email_mismatch: emailMismatch,
             ...(order.contact_id && !view
-              ? { note: 'no asksabrina match — contact_id present, future Maropost lookup can resolve to optin email' }
+              ? { note: `no ${project} match — contact_id present, future Maropost lookup can resolve to optin email` }
               : {}),
           },
         }
@@ -271,9 +262,7 @@ async function dispatchTool(
 
       case 'find_clickbank_receipts_by_email': {
         const { project, email } = input as { project: Project; email: string }
-        const vendor = VENDOR_BY_PROJECT[project]
-        if (!vendor) return { output: { error: 'unknown project vendor' }, is_error: true }
-        const orders = await clickbank.findOrdersByEmail(email, vendor, { type: 'SALE' })
+        const orders = await clickbank.findOrdersByEmail(email, vendorOf(project), { type: 'SALE' })
         return { output: orders }
       }
 
@@ -282,15 +271,11 @@ async function dispatchTool(
         if (project !== ctx.project) {
           return { output: { error: 'project mismatch' }, is_error: true }
         }
-        if (project !== 'asksabrina') {
-          return { output: { error: 'project not implemented' }, is_error: true }
-        }
-
-        const vendor = VENDOR_BY_PROJECT[project]
-        const receipts = await clickbank.findOrdersByEmail(email, vendor, { type: 'SALE' })
+        const conn = getConnector(project)
+        const receipts = await clickbank.findOrdersByEmail(email, vendorOf(project), { type: 'SALE' })
 
         // Group receipts by cId so callers see which receipts belong to which
-        // (potentially fragmented) asksabrina record.
+        // (potentially fragmented) customer record.
         const receiptsByCid = new Map<string, string[]>()
         const receiptsWithoutCid: string[] = []
         for (const r of receipts) {
@@ -306,9 +291,9 @@ async function dispatchTool(
         // Look up the email-matched record plus every unique cId in parallel.
         // Catch per-call so one 404 doesn't void the whole result.
         const lookupViews = await Promise.all([
-          asksabrina.lookupCustomer(email).catch(() => null),
+          conn.lookupCustomer(email).catch(() => null),
           ...Array.from(receiptsByCid.keys()).map((cId) =>
-            asksabrina.lookupCustomer(cId).catch(() => null),
+            conn.lookupCustomer(cId).catch(() => null),
           ),
         ])
 
@@ -317,12 +302,12 @@ async function dispatchTool(
         const recordMap = new Map<
           string,
           {
-            customer: asksabrina.AsksabrinaCustomerView['customer']
+            customer: UnifiedCustomerView['customer']
             matched_via: string
-            mainOrders: asksabrina.AsksabrinaCustomerView['mainOrders']
-            oto1Orders: asksabrina.AsksabrinaCustomerView['oto1Orders']
-            oto2Orders: asksabrina.AsksabrinaCustomerView['oto2Orders']
-            subscription: asksabrina.AsksabrinaCustomerView['subscription']
+            mainOrders: UnifiedCustomerView['mainOrders']
+            oto1Orders: UnifiedCustomerView['oto1Orders']
+            oto2Orders: UnifiedCustomerView['oto2Orders']
+            subscription: UnifiedCustomerView['subscription']
             linked_receipts: string[]
           }
         >()
@@ -336,7 +321,7 @@ async function dispatchTool(
             mainOrders: view.mainOrders,
             oto1Orders: view.oto1Orders,
             oto2Orders: view.oto2Orders,
-            subscription: view.subscription ?? null,
+            subscription: view.subscription,
             linked_receipts: receiptsByCid.get(cid) ?? [],
           })
         }
@@ -365,11 +350,8 @@ async function dispatchTool(
 
       case 'check_regeneration_job': {
         const { project, job_id } = input as { project: Project; job_id: string }
-        if (project === 'asksabrina') {
-          const job = await asksabrina.getJob(job_id)
-          return { output: job ?? { error: 'not_found' } }
-        }
-        return { output: { error: 'project not implemented' }, is_error: true }
+        const job = await getConnector(project).getJob(job_id)
+        return { output: job ?? { error: 'not_found' }, is_error: !job }
       }
 
       case 'propose_action': {
