@@ -193,7 +193,25 @@ async function resolveProject(tokens: ExtractedTokens): Promise<Resolution> {
   // Explicit brand keyword in the message always wins. If two were named,
   // bail — we don't pick.
   if (tokens.projects.length === 1) {
-    return { ok: true, project: tokens.projects[0]!, source: 'keyword' }
+    const project = tokens.projects[0]!
+    // When the user also gave us a receipt, fetch the billing email off it
+    // so the agent has a concrete customer to investigate — otherwise we'd
+    // bail with "no email" even though the receipt has one we could use.
+    if (tokens.receipts.length === 1) {
+      try {
+        const order = await getOrderByReceipt(tokens.receipts[0]!)
+        return {
+          ok: true,
+          project,
+          source: 'keyword',
+          derivedEmail: typeof order?.email === 'string' ? order.email : undefined,
+        }
+      } catch {
+        // Surface the keyword-resolved project even when CB is unreachable —
+        // the agent will still try the email-lookup tools.
+      }
+    }
+    return { ok: true, project, source: 'keyword' }
   }
   if (tokens.projects.length > 1) {
     return {
