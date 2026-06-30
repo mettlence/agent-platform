@@ -82,12 +82,25 @@ export async function runCsRecovery(input: RunInput): Promise<RunOutput> {
  *     re-runs the loop with the full prior conversation visible.
  *   - A `busy` lock prevents two concurrent runs from racing on the same
  *     thread (e.g. user fires two follow-ups in quick succession).
+ *   - Overrides from the new mention (receipt / email / project parsed out of
+ *     the user's message) replace the matching init_ctx fields for THIS turn's
+ *     system prompt — without them the LLM keeps reading stale identifiers
+ *     from the original mention even when the human is asking about a
+ *     different customer.
  *   - This does NOT cancel a pending approval — if the user wants to discard
  *     a still-open draft before re-opening, react ❌ first.
  */
+export interface ContinuationOverrides {
+  customer_email?: string
+  clickbank_receipt?: string
+  project?: Project
+  complaint_text?: string
+}
+
 export async function continueCsRecovery(
   threadId: string,
   userText: string,
+  overrides: ContinuationOverrides = {},
 ): Promise<RunOutput> {
   const thread = await getThread(threadId)
   if (!thread) {
@@ -112,11 +125,11 @@ export async function continueCsRecovery(
     const ctx: RunInput = {
       thread_id: threadId,
       ticket_id: thread.ticket_id,
-      project: thread.project as Project,
-      customer_email: thread.init_ctx.customer_email,
-      clickbank_receipt: thread.init_ctx.clickbank_receipt,
+      project: overrides.project ?? (thread.project as Project),
+      customer_email: overrides.customer_email ?? thread.init_ctx.customer_email,
+      clickbank_receipt: overrides.clickbank_receipt ?? thread.init_ctx.clickbank_receipt,
       order_id: thread.init_ctx.order_id,
-      complaint_text: thread.init_ctx.complaint_text,
+      complaint_text: overrides.complaint_text ?? thread.init_ctx.complaint_text,
       trigger_user_id: thread.init_ctx.trigger_user_id,
     }
     const newMsg: Message = { role: 'user', content: userText }
