@@ -59,7 +59,7 @@ export const csRecoveryTools: Tool[] = [
   {
     name: 'find_clickbank_receipts_by_email',
     description:
-      'Search ClickBank for orders matching a customer email under the given project vendor. Use when the customer claims to have paid but no order is on file in our DB. Returns an array of orders (may be empty).',
+      'Search ClickBank for ALL orders matching a customer email under the given project vendor. Returns an array of orders (may be empty). CALL THIS EAGERLY — even when the user gave you a specific receipt to investigate, the customer\'s full purchase history reveals: (a) repeat purchases of the same SKU (second-main pattern — see skill "Repeat purchases"), (b) fragmented customer records (multiple cIds — see skill "Fragmented customer records"), (c) related OTO/subscription receipts the single-receipt view hides. Skipping this step is the most common cause of misclassified create_order drafts.',
     input_schema: {
       type: 'object',
       properties: {

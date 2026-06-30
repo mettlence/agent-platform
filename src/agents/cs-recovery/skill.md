@@ -65,21 +65,31 @@ you own the data fix.
    - Likely a generation failure, not a payment failure.
    - Draft action: regenerate only.
 5. If order NOT found on the resolved record:
-   - Search ClickBank by email (`find_clickbank_receipts_by_email`).
+   - Search ClickBank by email (`find_clickbank_receipts_by_email`). **Always
+     do this even when the user already gave you a receipt** — it surfaces
+     repeat purchases and fragmentation cases the single-receipt view hides.
    - If receipts contain MORE THAN ONE distinct cId, the customer is fragmented
      — see "Fragmented customer records" below to find the right record before
      deciding.
+   - If the receipt under investigation shares its SKU with a receipt already
+     paid on the resolved record (same product bought twice), see
+     "Repeat purchases" below. Do NOT classify this as an OTO.
    - If a valid receipt exists and matches a customer record (directly or via
      cId), but the corresponding order row is missing on that record: **draft
      `create_order`**. This is the recovery agent's primary job. Required
      fields:
      - `customer_id`: from the resolved record (`customer_view.customer.id`)
      - `payment_meta`: from the verified ClickBank receipt
-     - `main_order_id`: **required for kind=oto1/oto2/subscription**. Pick
-       the parent main order's `ref` from `customer_view.mainOrders[*].ref`.
-       If there is no paid main order on the record, you cannot create an
-       OTO or subscription — escalate instead. Backend rejects with 400 if
-       this field is missing.
+     - `order_kind`: **derive from `payment_meta.productSku`, NEVER from
+       "what the customer already has on file"**. See "SKU → kind mapping"
+       below. A second purchase of a main-funnel SKU is still kind=main even
+       when the customer already has a paid main order on the record.
+     - `main_order_id`: **required for kind=oto1/oto2/subscription only**.
+       For kind=main this field is OMITTED — main orders have no parent.
+       Pick the parent main order's `ref` from `customer_view.mainOrders[*].ref`
+       for OTO/subscription. If there is no paid main order on the record,
+       you cannot create an OTO or subscription — escalate instead. Backend
+       rejects with 400 if this field is missing on OTO/sub.
      - `question`: optional, main only. When the funnel skipped optin
        (marketing email bypass), the customer's 3 intake questions live
        on the Maropost contact (`asksabrina_question_1/2/3`); cross-look
@@ -91,6 +101,50 @@ you own the data fix.
      longer SALE / BILL (refund or cancel-rebill caught defense-in-depth).
    - If no receipts at all for the email at ClickBank: customer may be
      confused, or this may be fraud. Escalate with the data you found.
+
+### SKU → kind mapping
+
+`order_kind` is a property of the PRODUCT, not of the customer's purchase
+history. Read it off `payment_meta.productSku`:
+
+**asksabrina**
+- `abdt-basic` → kind=main (itemNumber 1)
+- `abdt-advanced` → kind=main (itemNumber 2)
+- Any SKU NOT in that list → OTO or subscription. The exact kind depends on
+  the SKU's product role at funnel time. When unsure, escalate with the SKU
+  named so a human can confirm.
+
+**astroloversketch**
+- Funnel-side SKU naming pattern is `alsv*` for the main bracelet/sketch
+  product family. OTO SKUs differ — escalate the SKU explicitly if you can't
+  confirm the mapping from prior tickets.
+
+The backend ALSO enforces this — `create_order` returns 422
+`sku_kind_mismatch` if you propose kind=oto1/oto2/subscription with a main
+SKU (or vice versa). Treat that error as a signal you mis-classified; redraft
+with the correct kind.
+
+### Repeat purchases
+
+A customer may legitimately buy the same product twice — the funnel does not
+prevent it. When `find_clickbank_receipts_by_email` returns multiple receipts
+sharing a SKU (e.g. two `abdt-advanced` SALEs days apart), and the same
+customer record already has the first purchase paid + delivered, the second
+receipt is a **second main order**, not an OTO. Specifically:
+
+- `customer_view.mainOrders` length > 0 does NOT prevent another main order
+  from being created. Multiple main orders per customer are allowed.
+- The new main order is standalone: no `main_order_id` field, no parent
+  linkage. The `customer_id` is the existing record's id (re-use the one
+  from `lookup_customer`).
+- Reading regeneration after create_order runs against the newly created
+  main order's `ref`, producing a fresh main reading independent of the
+  prior one.
+
+Escalation template addition: when proposing create_order for a repeat
+purchase, your reasoning MUST explicitly call out "second main purchase by
+existing customer (prior main = ORD…, paid + delivered)" so the human
+approver sees you understood the pattern.
 
 ### Fragmented customer records
 
