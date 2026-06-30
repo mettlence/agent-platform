@@ -44,7 +44,7 @@ const asksabrinaConnector: ProjectConnector = {
       subscription: v.subscription ?? null,
     }
   },
-  ensureReading: (ref, kind) => asksabrina.ensureReading(ref, kind),
+  ensureReading: (ref, kind, opts) => asksabrina.ensureReading(ref, kind, opts),
   getJob: (id) => asksabrina.getJob(id),
   waitForJob: (id, opts) => asksabrina.waitForJob(id, opts),
   markOrderPaid: (input) => asksabrina.markOrderPaid(input),
@@ -73,9 +73,9 @@ const astroloversketchConnector: ProjectConnector = {
       subscription: null,
     }
   },
-  ensureReading: (ref, kind) => {
+  ensureReading: (ref, kind, opts) => {
     if (kind === 'subscription') return astroSubscriptionRejection()
-    return astroloversketch.ensureReading(ref, kind)
+    return astroloversketch.ensureReading(ref, kind, opts)
   },
   getJob: (id) => astroloversketch.getJob(id),
   waitForJob: (id, opts) => astroloversketch.waitForJob(id, opts),

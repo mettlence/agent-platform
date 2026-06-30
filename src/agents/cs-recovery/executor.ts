@@ -262,7 +262,11 @@ async function executeRegenerate(input: ExecuteInput): Promise<ExecuteOutput> {
   const conn = getConnector(project)
 
   try {
-    const ensureRes = await conn.ensureReading(draft.ref, draft.order_kind)
+    // action_type='regenerate' is the explicit "please redo this reading" path
+    // (CS or customer request). Pass regenerate=true so the backend bypasses
+    // its already_ready short-circuit and re-runs the generator. Without this,
+    // regenerate would silently no-op on completed orders.
+    const ensureRes = await conn.ensureReading(draft.ref, draft.order_kind, { regenerate: true })
     let jobId: string | undefined
     let jobPending = false
 

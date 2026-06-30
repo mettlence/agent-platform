@@ -93,11 +93,15 @@ export interface EnsureReadingResponse {
   downloadUrl?: string
 }
 
-export async function ensureReading(ref: string, kind: OrderKind): Promise<EnsureReadingResponse> {
+export async function ensureReading(
+  ref: string,
+  kind: OrderKind,
+  opts: { regenerate?: boolean } = {},
+): Promise<EnsureReadingResponse> {
   const res = await fetch(`${env.ASKSABRINA_API_BASE}/ensure-reading`, {
     method: 'POST',
     headers: headers(),
-    body: JSON.stringify({ ref, kind }),
+    body: JSON.stringify({ ref, kind, ...(opts.regenerate ? { regenerate: true } : {}) }),
   })
   if (!res.ok) {
     throw new Error(`asksabrina ensureReading failed: ${res.status} ${await res.text()}`)

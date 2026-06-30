@@ -132,7 +132,11 @@ export interface CreateOrderResponse {
 export interface ProjectConnector {
   supportsSubscription: boolean
   lookupCustomer(q: string): Promise<UnifiedCustomerView | null>
-  ensureReading(ref: string, kind: OrderKind): Promise<EnsureReadingResponse>
+  ensureReading(
+    ref: string,
+    kind: OrderKind,
+    opts?: { regenerate?: boolean },
+  ): Promise<EnsureReadingResponse>
   getJob(jobId: string): Promise<UnifiedJob | null>
   waitForJob(
     jobId: string,
