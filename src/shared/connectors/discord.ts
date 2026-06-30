@@ -87,3 +87,29 @@ export async function createThreadFromMessage(
     autoArchiveDuration: 1440, // 24h
   })
 }
+
+/**
+ * Show the "Bot is typing…" indicator while a long-running task is in flight.
+ * Discord auto-clears the indicator after ~10s, so we re-send every 5s. The
+ * returned function stops the loop — always call it in a finally so we don't
+ * leak intervals.
+ *
+ *   const stopTyping = startTyping(thread)
+ *   try { await doWork() } finally { stopTyping() }
+ */
+// Loose duck-typed channel — ThreadChannel and TextChannel both have
+// sendTyping, but their discriminated-union types don't cleanly converge,
+// so accepting "anything with sendTyping" sidesteps the friction.
+type Typeable = { sendTyping: () => Promise<unknown> }
+
+export function startTyping(channel: unknown): () => void {
+  if (!channel || typeof (channel as Typeable).sendTyping !== 'function') {
+    return () => {}
+  }
+  const tick = () => {
+    ;(channel as Typeable).sendTyping().catch(() => {})
+  }
+  tick()
+  const id = setInterval(tick, 5_000)
+  return () => clearInterval(id)
+}

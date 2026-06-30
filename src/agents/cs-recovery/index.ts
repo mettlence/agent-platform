@@ -123,11 +123,31 @@ export async function continueCsRecovery(
     await appendMessage(threadId, newMsg)
     return await runAgentLoop({
       ctx,
-      messages: [...thread.messages, newMsg],
+      messages: [...sanitizeHistory(thread.messages), newMsg],
     })
   } finally {
     await clearBusy(threadId)
   }
+}
+
+/**
+ * Strip falsy `is_error` fields from tool_result blocks in persisted
+ * history. BSON stores `undefined` as `null` and Anthropic rejects either
+ * — only `true` or absent is valid. Defensive: covers both this codebase's
+ * old writes and any future round-tripping.
+ */
+function sanitizeHistory(messages: Message[]): Message[] {
+  return messages.map((m) => {
+    if (typeof m.content === 'string') return m
+    return {
+      ...m,
+      content: m.content.map((block) => {
+        if (block.type !== 'tool_result') return block
+        const { is_error, ...rest } = block as { is_error?: unknown } & Record<string, unknown>
+        return (is_error === true ? { ...rest, is_error: true } : rest) as ContentBlock
+      }),
+    }
+  })
 }
 
 async function runAgentLoop(opts: {
@@ -197,11 +217,15 @@ async function runAgentLoop(opts: {
       const result = await dispatchTool(block.name, block.input, ctx)
       if (result.draft) draftAction = result.draft
       if (result.escalation) escalation = result.escalation
+      // Anthropic rejects is_error: null/undefined/false. Only set the field
+      // when it's actually true, otherwise omit entirely. (Initial runs worked
+      // because the SDK strips undefined before send, but BSON persists null,
+      // which then poisons continuation reads.)
       toolResults.push({
         type: 'tool_result',
         tool_use_id: block.id,
         content: JSON.stringify(result.output),
-        is_error: result.is_error,
+        ...(result.is_error ? { is_error: true as const } : {}),
       })
     }
     messages.push({ role: 'user', content: toolResults })

@@ -1,8 +1,7 @@
-import type { Message } from 'discord.js'
+import type { Message, ThreadChannel } from 'discord.js'
 import { continueCsRecovery } from '@/agents/cs-recovery/index.js'
-import { sendToThread } from '@/shared/connectors/discord.js'
+import { sendToThread, startTyping } from '@/shared/connectors/discord.js'
 import { attachDiscordMessageId } from '@/shared/state/approvals.js'
-import type { ThreadChannel } from 'discord.js'
 import { extractFreeText, stripDiscordMentions } from '@/discord-bot/extractors.js'
 
 /**
@@ -27,32 +26,37 @@ export async function handleThreadContinuation(message: Message): Promise<void> 
     return
   }
 
-  const result = await continueCsRecovery(thread.id, userText)
+  const stopTyping = startTyping(thread)
+  try {
+    const result = await continueCsRecovery(thread.id, userText)
 
-  if (result.status === 'drafted' && result.draft && result.approval_id) {
-    const draftMessage = await sendToThread(thread, formatDraft(result.draft))
-    await attachDiscordMessageId(result.approval_id, draftMessage.id)
-    await draftMessage.react('✅')
-    await draftMessage.react('❌')
-  } else if (result.status === 'escalated' && result.escalation) {
-    await sendToThread(
-      thread,
-      [
-        `⚠️ **Escalating to human**`,
-        `**Reason:** ${result.escalation.reason}`,
-        '',
-        result.escalation.summary,
-        result.escalation.suggested_next_step
-          ? `\n**Suggested next step:**\n${result.escalation.suggested_next_step}`
-          : '',
-      ]
-        .filter(Boolean)
-        .join('\n'),
-    )
-  } else if (result.status === 'noop' && result.noop_message) {
-    await sendToThread(thread, [`ℹ️ ${result.noop_message}`].join('\n'))
-  } else if (result.status === 'error') {
-    await sendToThread(thread, `❌ \`${result.error}\``)
+    if (result.status === 'drafted' && result.draft && result.approval_id) {
+      const draftMessage = await sendToThread(thread, formatDraft(result.draft))
+      await attachDiscordMessageId(result.approval_id, draftMessage.id)
+      await draftMessage.react('✅')
+      await draftMessage.react('❌')
+    } else if (result.status === 'escalated' && result.escalation) {
+      await sendToThread(
+        thread,
+        [
+          `⚠️ **Escalating to human**`,
+          `**Reason:** ${result.escalation.reason}`,
+          '',
+          result.escalation.summary,
+          result.escalation.suggested_next_step
+            ? `\n**Suggested next step:**\n${result.escalation.suggested_next_step}`
+            : '',
+        ]
+          .filter(Boolean)
+          .join('\n'),
+      )
+    } else if (result.status === 'noop' && result.noop_message) {
+      await sendToThread(thread, [`ℹ️ ${result.noop_message}`].join('\n'))
+    } else if (result.status === 'error') {
+      await sendToThread(thread, `❌ \`${result.error}\``)
+    }
+  } finally {
+    stopTyping()
   }
 }
 

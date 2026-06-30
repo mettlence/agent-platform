@@ -1,6 +1,6 @@
 import type { Message } from 'discord.js'
 import { runCsRecovery } from '@/agents/cs-recovery/index.js'
-import { createThreadFromMessage, sendToThread } from '@/shared/connectors/discord.js'
+import { createThreadFromMessage, sendToThread, startTyping } from '@/shared/connectors/discord.js'
 import { attachDiscordMessageId } from '@/shared/state/approvals.js'
 import { getOrderByReceipt } from '@/shared/connectors/clickbank.js'
 import { projectFromVendor } from '@/config/env.js'
@@ -114,7 +114,10 @@ export async function handleMentionCommand(message: Message): Promise<void> {
   const complaintText = [ownFreeText, contextFreeText].filter(Boolean).join(' — ') || undefined
 
   const thread = await createThreadFromMessage(message, `${ticketId} · cs-recovery`)
-  await sendToThread(
+  // The "investigating ..." line gives instant feedback that the bot picked
+  // up the ticket; once the final result lands we delete it so the thread
+  // reads as just (user mention) → (bot answer) without scaffolding noise.
+  const investigatingMsg = await sendToThread(
     thread,
     [
       `🤖 Investigating **${ticketId}** for **${email}**`,
@@ -126,40 +129,46 @@ export async function handleMentionCommand(message: Message): Promise<void> {
       .join('\n'),
   )
 
-  const result = await runCsRecovery({
-    thread_id: thread.id,
-    ticket_id: ticketId,
-    project,
-    customer_email: email,
-    clickbank_receipt: receipt,
-    complaint_text: complaintText,
-    trigger_user_id: message.author.id,
-  })
+  const stopTyping = startTyping(thread)
+  try {
+    const result = await runCsRecovery({
+      thread_id: thread.id,
+      ticket_id: ticketId,
+      project,
+      customer_email: email,
+      clickbank_receipt: receipt,
+      complaint_text: complaintText,
+      trigger_user_id: message.author.id,
+    })
 
-  if (result.status === 'drafted' && result.draft && result.approval_id) {
-    const draftMessage = await sendToThread(thread, formatDraft(result.draft))
-    await attachDiscordMessageId(result.approval_id, draftMessage.id)
-    await draftMessage.react('✅')
-    await draftMessage.react('❌')
-  } else if (result.status === 'escalated' && result.escalation) {
-    await sendToThread(
-      thread,
-      [
-        `⚠️ **Escalating to human**`,
-        `**Reason:** ${result.escalation.reason}`,
-        '',
-        result.escalation.summary,
-        result.escalation.suggested_next_step
-          ? `\n**Suggested next step:**\n${result.escalation.suggested_next_step}`
-          : '',
-      ]
-        .filter(Boolean)
-        .join('\n'),
-    )
-  } else if (result.status === 'noop' && result.noop_message) {
-    await sendToThread(thread, [`ℹ️ **No action needed**`, '', result.noop_message].join('\n'))
-  } else if (result.status === 'error') {
-    await sendToThread(thread, `❌ Error: \`${result.error}\``)
+    if (result.status === 'drafted' && result.draft && result.approval_id) {
+      const draftMessage = await sendToThread(thread, formatDraft(result.draft))
+      await attachDiscordMessageId(result.approval_id, draftMessage.id)
+      await draftMessage.react('✅')
+      await draftMessage.react('❌')
+    } else if (result.status === 'escalated' && result.escalation) {
+      await sendToThread(
+        thread,
+        [
+          `⚠️ **Escalating to human**`,
+          `**Reason:** ${result.escalation.reason}`,
+          '',
+          result.escalation.summary,
+          result.escalation.suggested_next_step
+            ? `\n**Suggested next step:**\n${result.escalation.suggested_next_step}`
+            : '',
+        ]
+          .filter(Boolean)
+          .join('\n'),
+      )
+    } else if (result.status === 'noop' && result.noop_message) {
+      await sendToThread(thread, [`ℹ️ **No action needed**`, '', result.noop_message].join('\n'))
+    } else if (result.status === 'error') {
+      await sendToThread(thread, `❌ Error: \`${result.error}\``)
+    }
+    await investigatingMsg.delete().catch(() => {})
+  } finally {
+    stopTyping()
   }
 }
 
