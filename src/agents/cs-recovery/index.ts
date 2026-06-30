@@ -7,7 +7,14 @@ import * as clickbank from '@/shared/connectors/clickbank.js'
 import { getConnector, vendorOf, type ProjectKey } from '@/config/projects.js'
 import type { UnifiedCustomerView } from '@/shared/connectors/types.js'
 import { verifyPaymentGate } from '@/shared/gates/payment-verify.js'
-import { appendMessage, createThread, getThread } from '@/shared/state/threads.js'
+import {
+  appendMessage,
+  clearBusy,
+  createThread,
+  getThread,
+  tryMarkBusy,
+  type ThreadInitCtx,
+} from '@/shared/state/threads.js'
 import { createApproval } from '@/shared/state/approvals.js'
 import { loadActiveLessons } from '@/shared/state/lessons.js'
 import { postToThread } from '@/shared/connectors/discord.js'
@@ -41,33 +48,106 @@ const MAX_TOKENS_PER_RUN = 100_000
 
 export async function runCsRecovery(input: RunInput): Promise<RunOutput> {
   if (!(await getThread(input.thread_id))) {
+    const init_ctx: ThreadInitCtx = {
+      customer_email: input.customer_email,
+      ...(input.clickbank_receipt ? { clickbank_receipt: input.clickbank_receipt } : {}),
+      ...(input.order_id ? { order_id: input.order_id } : {}),
+      ...(input.complaint_text ? { complaint_text: input.complaint_text } : {}),
+      trigger_user_id: input.trigger_user_id,
+    }
     await createThread({
       _id: input.thread_id,
       ticket_id: input.ticket_id,
       project: input.project,
       agent: 'cs-recovery',
+      init_ctx,
     })
   }
 
-  const lessons = await loadActiveLessons(input.project)
+  const seed: Message = {
+    role: 'user',
+    content: `Investigate ticket ${input.ticket_id} for customer ${input.customer_email}.`,
+  }
+  await appendMessage(input.thread_id, seed)
+  return runAgentLoop({ ctx: input, messages: [seed] })
+}
 
+/**
+ * Resume an existing cs-recovery thread with a new user turn. Reconstructs
+ * RunInput from the thread's init_ctx so callers only need the thread id and
+ * the new message text — identifiers persist across turns.
+ *
+ * Multi-turn semantics:
+ *   - The new user text is appended to the persisted history; the agent then
+ *     re-runs the loop with the full prior conversation visible.
+ *   - A `busy` lock prevents two concurrent runs from racing on the same
+ *     thread (e.g. user fires two follow-ups in quick succession).
+ *   - This does NOT cancel a pending approval — if the user wants to discard
+ *     a still-open draft before re-opening, react ❌ first.
+ */
+export async function continueCsRecovery(
+  threadId: string,
+  userText: string,
+): Promise<RunOutput> {
+  const thread = await getThread(threadId)
+  if (!thread) {
+    return { status: 'error', error: 'thread not found — nothing to continue' }
+  }
+  if (!thread.init_ctx) {
+    return {
+      status: 'error',
+      error: 'thread predates multi-turn support — start a new mention instead',
+    }
+  }
+
+  const claimed = await tryMarkBusy(threadId)
+  if (!claimed) {
+    return {
+      status: 'error',
+      error: 'another run is in progress on this thread — wait for it to finish',
+    }
+  }
+
+  try {
+    const ctx: RunInput = {
+      thread_id: threadId,
+      ticket_id: thread.ticket_id,
+      project: thread.project as Project,
+      customer_email: thread.init_ctx.customer_email,
+      clickbank_receipt: thread.init_ctx.clickbank_receipt,
+      order_id: thread.init_ctx.order_id,
+      complaint_text: thread.init_ctx.complaint_text,
+      trigger_user_id: thread.init_ctx.trigger_user_id,
+    }
+    const newMsg: Message = { role: 'user', content: userText }
+    await appendMessage(threadId, newMsg)
+    return await runAgentLoop({
+      ctx,
+      messages: [...thread.messages, newMsg],
+    })
+  } finally {
+    await clearBusy(threadId)
+  }
+}
+
+async function runAgentLoop(opts: {
+  ctx: RunInput
+  messages: Message[]
+}): Promise<RunOutput> {
+  const { ctx } = opts
+  const messages = [...opts.messages]
+
+  const lessons = await loadActiveLessons(ctx.project)
   const promptOpts: SystemPromptOptions = {
-    project: input.project,
-    ticket_id: input.ticket_id,
-    customer_email: input.customer_email,
-    order_id: input.order_id,
-    clickbank_receipt: input.clickbank_receipt,
-    complaint_text: input.complaint_text,
+    project: ctx.project,
+    ticket_id: ctx.ticket_id,
+    customer_email: ctx.customer_email,
+    order_id: ctx.order_id,
+    clickbank_receipt: ctx.clickbank_receipt,
+    complaint_text: ctx.complaint_text,
     lessons: lessons.map((l) => `(${l.pattern}) ${l.rule}`),
   }
   const system = await buildSystemPrompt(promptOpts)
-
-  const messages: Message[] = [
-    {
-      role: 'user',
-      content: `Investigate ticket ${input.ticket_id} for customer ${input.customer_email}.`,
-    },
-  ]
 
   let totalTokens = 0
   let draftAction: Record<string, unknown> | null = null
@@ -90,7 +170,7 @@ export async function runCsRecovery(input: RunInput): Promise<RunOutput> {
     }
 
     messages.push({ role: 'assistant', content: response.content })
-    await appendMessage(input.thread_id, { role: 'assistant', content: response.content })
+    await appendMessage(ctx.thread_id, { role: 'assistant', content: response.content })
 
     if (response.stop_reason === 'end_turn') {
       // The model concluded its investigation without calling propose_action
@@ -114,7 +194,7 @@ export async function runCsRecovery(input: RunInput): Promise<RunOutput> {
     const toolResults: ContentBlock[] = []
     for (const block of response.content) {
       if (block.type !== 'tool_use') continue
-      const result = await dispatchTool(block.name, block.input, input)
+      const result = await dispatchTool(block.name, block.input, ctx)
       if (result.draft) draftAction = result.draft
       if (result.escalation) escalation = result.escalation
       toolResults.push({
@@ -125,15 +205,15 @@ export async function runCsRecovery(input: RunInput): Promise<RunOutput> {
       })
     }
     messages.push({ role: 'user', content: toolResults })
-    await appendMessage(input.thread_id, { role: 'user', content: toolResults })
+    await appendMessage(ctx.thread_id, { role: 'user', content: toolResults })
 
     if (draftAction) {
       const approvalId = await createApproval({
-        thread_id: input.thread_id,
-        ticket_id: input.ticket_id,
-        project: input.project,
+        thread_id: ctx.thread_id,
+        ticket_id: ctx.ticket_id,
+        project: ctx.project,
         agent: 'cs-recovery',
-        customer_email: input.customer_email,
+        customer_email: ctx.customer_email,
         drafted_action: draftAction,
         discord_message_id: '',          // filled by handler when it posts
         expires_at: new Date(Date.now() + 7 * 24 * 3600 * 1000),
