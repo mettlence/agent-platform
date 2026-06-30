@@ -466,13 +466,47 @@ async function dispatchTool(
           customer_id?: string
           main_order_id?: string
           payment_meta?: Record<string, unknown>
+          patch?: Record<string, unknown>
+          regen_ref?: string
+          regen_kind?: string
         }
-        if (draft.action_type === 'create_order') {
+        if (draft.action_type === 'update_customer_profile') {
           if (!draft.customer_id) {
             return {
               output: {
                 error:
-                  'create_order requires customer_id (the target asksabrina customer.id from resolve_customer_identity or find_all_customer_records)',
+                  'update_customer_profile requires customer_id (from customer_view.customer.id)',
+              },
+              is_error: true,
+            }
+          }
+          if (
+            !draft.patch ||
+            typeof draft.patch !== 'object' ||
+            Object.keys(draft.patch).length === 0
+          ) {
+            return {
+              output: {
+                error:
+                  'update_customer_profile requires patch (object of customer-field → new value). See tool description for whitelist per project.',
+              },
+              is_error: true,
+            }
+          }
+          if (draft.regen_ref && !draft.regen_kind) {
+            return {
+              output: {
+                error: 'update_customer_profile: regen_ref requires regen_kind',
+              },
+              is_error: true,
+            }
+          }
+        } else if (draft.action_type === 'create_order') {
+          if (!draft.customer_id) {
+            return {
+              output: {
+                error:
+                  'create_order requires customer_id (the target customer.id from resolve_customer_identity or find_all_customer_records)',
               },
               is_error: true,
             }

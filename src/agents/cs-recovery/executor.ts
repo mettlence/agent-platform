@@ -17,7 +17,7 @@ export interface ExecuteInput {
 }
 
 export interface DraftAction {
-  action_type: 'update_order' | 'regenerate' | 'create_order'
+  action_type: 'update_order' | 'regenerate' | 'create_order' | 'update_customer_profile'
   project: Project
   /**
    * Required for `update_order` and `regenerate` — the existing order's mongo _id.
@@ -63,6 +63,12 @@ export interface DraftAction {
   engine_version?: 'v1' | 'v2'
   /** create_order kind=main only. Customer's intake questions. */
   question?: string[]
+  /** REQUIRED for update_customer_profile — object of whitelisted field → new value. */
+  patch?: Record<string, unknown>
+  /** OPTIONAL for update_customer_profile — mongo _id of the order to auto-regenerate after patch lands. */
+  regen_ref?: string
+  /** OPTIONAL for update_customer_profile, paired with regen_ref. */
+  regen_kind?: 'main' | 'oto1' | 'oto2' | 'subscription'
   before?: Record<string, unknown>
   after?: Record<string, unknown>
   reasoning: string
@@ -115,6 +121,8 @@ export async function executeApprovedAction(input: ExecuteInput): Promise<Execut
       return executeRegenerate(input)
     case 'create_order':
       return executeCreateOrder(input)
+    case 'update_customer_profile':
+      return executeUpdateCustomerProfile(input)
     default:
       return { ok: false, error: `unknown action_type: ${(draft as DraftAction).action_type}` }
   }
@@ -504,6 +512,129 @@ async function executeCreateOrder(input: ExecuteInput): Promise<ExecuteOutput> {
     })
     return { ok: false, error: msg }
   }
+}
+
+/**
+ * Patch a customer's profile (whitelisted fields only, enforced backend-side)
+ * and optionally auto-regenerate one reading whose content depends on the
+ * patched fields. No payment gate runs here — this isn't a payment-mutating
+ * path — but the receipt-shaped idempotency key prevents double-execute on
+ * the same patch landing twice in quick succession.
+ */
+async function executeUpdateCustomerProfile(input: ExecuteInput): Promise<ExecuteOutput> {
+  const { draft, thread_id, ticket_id, project, customer_email, approved_by } = input
+
+  if (!draft.customer_id) {
+    return { ok: false, error: 'update_customer_profile requires customer_id' }
+  }
+  if (!draft.patch || typeof draft.patch !== 'object' || Object.keys(draft.patch).length === 0) {
+    return { ok: false, error: 'update_customer_profile requires non-empty patch object' }
+  }
+  if (draft.regen_ref && !draft.regen_kind) {
+    return { ok: false, error: 'regen_ref requires regen_kind' }
+  }
+
+  const conn = getConnector(project)
+
+  // Stable idempotency on the (customer, patch) tuple. Same approved patch
+  // re-fired won't double-write the audit log entry on the backend (it
+  // would, but the executor short-circuits before calling).
+  const patchHash = stableHash(draft.patch)
+  const idemKey = `${project}:update_customer_profile:${draft.customer_id}:${patchHash}`
+  const placeholderId = new ObjectId()
+  const claimed = await claimIdempotency(idemKey, thread_id, placeholderId)
+  if (!claimed) {
+    return { ok: false, error: 'idempotency: this patch already executed' }
+  }
+
+  try {
+    const patchRes = await conn.updateCustomerProfile({
+      customerId: draft.customer_id,
+      patch: draft.patch,
+      reason: draft.reasoning,
+    })
+
+    let jobId: string | undefined
+    let jobPending = false
+    let urls: Awaited<ReturnType<typeof resolveActionUrls>> = {}
+
+    if (draft.regen_ref && draft.regen_kind) {
+      const ensureRes = await conn.ensureReading(draft.regen_ref, draft.regen_kind, {
+        regenerate: true,
+      })
+      if (ensureRes.status !== 'already_ready' && ensureRes.jobId) {
+        jobId = ensureRes.jobId
+        const finalJob = await conn.waitForJob(ensureRes.jobId, { timeoutMs: 5 * 60 * 1000 })
+        if (finalJob?.status !== 'done') jobPending = true
+      }
+      urls = await resolveActionUrls({
+        project,
+        customer_email,
+        ref: draft.regen_ref,
+        kind: draft.regen_kind,
+      })
+    }
+
+    const actionId = await recordAction({
+      thread_id,
+      ticket_id,
+      project,
+      agent: 'cs-recovery',
+      action_type: 'update_customer_profile',
+      before: patchRes.before,
+      after: patchRes.after,
+      reasoning: draft.reasoning,
+      gates_passed: draft.gates_passed,
+      approved_by,
+      approved_at: new Date(),
+      executed_at: new Date(),
+      result: 'success',
+      result_meta: { ...urls, job_id: jobId, regen_ref: draft.regen_ref ?? null },
+    })
+
+    return {
+      ok: true,
+      action_id: actionId,
+      result: {
+        before: patchRes.before,
+        after: patchRes.after,
+        ...urls,
+        kind: draft.regen_kind,
+        job_id: jobId,
+        job_pending: jobPending,
+      },
+    }
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err)
+    await recordAction({
+      thread_id,
+      ticket_id,
+      project,
+      agent: 'cs-recovery',
+      action_type: 'update_customer_profile',
+      before: null,
+      after: null,
+      reasoning: draft.reasoning,
+      gates_passed: draft.gates_passed,
+      approved_by,
+      approved_at: new Date(),
+      executed_at: new Date(),
+      result: 'failure',
+      error: msg,
+    })
+    return { ok: false, error: msg }
+  }
+}
+
+function stableHash(obj: Record<string, unknown>): string {
+  // Sort keys for stability so { a:1, b:2 } and { b:2, a:1 } hash the same.
+  const sorted = Object.keys(obj)
+    .sort()
+    .reduce<Record<string, unknown>>((acc, k) => {
+      acc[k] = obj[k]
+      return acc
+    }, {})
+  return Buffer.from(JSON.stringify(sorted)).toString('base64url').slice(0, 40)
 }
 
 /**

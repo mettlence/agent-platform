@@ -246,6 +246,36 @@ export async function createOrder(input: CreateOrderInput): Promise<CreateOrderR
   return (await res.json()) as CreateOrderResponse
 }
 
+export interface UpdateCustomerProfileInput {
+  customerId: string
+  patch: Record<string, unknown>
+  reason?: string
+}
+
+export interface UpdateCustomerProfileResponse {
+  ok: true
+  customerId: string
+  before: Record<string, unknown>
+  after: Record<string, unknown>
+}
+
+export async function updateCustomerProfile(
+  input: UpdateCustomerProfileInput,
+): Promise<UpdateCustomerProfileResponse> {
+  const res = await fetch(`${env.ASKSABRINA_API_BASE}/customer/${encodeURIComponent(input.customerId)}`, {
+    method: 'PATCH',
+    headers: headers(),
+    body: JSON.stringify({
+      patch: input.patch,
+      ...(input.reason ? { reason: input.reason } : {}),
+    }),
+  })
+  if (!res.ok) {
+    throw new Error(`asksabrina updateCustomerProfile failed: ${res.status} ${await res.text()}`)
+  }
+  return (await res.json()) as UpdateCustomerProfileResponse
+}
+
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms))
 }

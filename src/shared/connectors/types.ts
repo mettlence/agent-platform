@@ -122,6 +122,24 @@ export interface CreateOrderResponse {
   after: Record<string, unknown>
 }
 
+export interface UpdateCustomerProfileInput {
+  customerId: string
+  /**
+   * Per-project whitelisted field → new value. Each backend rejects keys
+   * not in its allowed set with a 400 naming the offender, so callers
+   * don't need to know the whitelist in advance.
+   */
+  patch: Record<string, unknown>
+  reason?: string
+}
+
+export interface UpdateCustomerProfileResponse {
+  ok: true
+  customerId: string
+  before: Record<string, unknown>
+  after: Record<string, unknown>
+}
+
 /**
  * The full surface every project's connector must satisfy. New brands wire in
  * by implementing this and registering in src/config/projects.ts.
@@ -144,4 +162,5 @@ export interface ProjectConnector {
   ): Promise<UnifiedJob | null>
   markOrderPaid(input: MarkOrderPaidInput): Promise<MarkOrderPaidResponse>
   createOrder(input: CreateOrderInput): Promise<CreateOrderResponse>
+  updateCustomerProfile(input: UpdateCustomerProfileInput): Promise<UpdateCustomerProfileResponse>
 }

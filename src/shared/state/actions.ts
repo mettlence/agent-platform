@@ -7,7 +7,7 @@ export interface AgentAction {
   ticket_id: string
   project: string
   agent: string
-  action_type: 'update_order' | 'regenerate' | 'create_order' | 'escalate'
+  action_type: 'update_order' | 'regenerate' | 'create_order' | 'update_customer_profile' | 'escalate'
   before: Record<string, unknown> | null
   after: Record<string, unknown> | null
   reasoning: string

@@ -98,13 +98,13 @@ export const csRecoveryTools: Tool[] = [
   {
     name: 'propose_action',
     description:
-      'Draft an action for human approval. Posts the proposal in the Discord thread; a human reacts ✅ to execute or ❌ to skip. Use this for any DB mutation: update_order (mark-paid an existing order), regenerate (re-run delivery), or create_order (insert a missing order when ClickBank has a valid receipt but the asksabrina row was never written). All three execute automatically on ✅; gates re-run at execution time. Do NOT execute directly.',
+      'Draft an action for human approval. Posts the proposal in the Discord thread; a human reacts ✅ to execute or ❌ to skip. Use this for any DB mutation: update_order (mark-paid an existing order), regenerate (re-run delivery), create_order (insert a missing order when ClickBank has a valid receipt but the row was never written), or update_customer_profile (fix customer profile data like birthdate / zodiac / interested gender — the executor will optionally auto-regenerate the reading the agent specifies). All execute automatically on ✅; gates re-run at execution time. Do NOT execute directly.',
     input_schema: {
       type: 'object',
       properties: {
         action_type: {
           type: 'string',
-          enum: ['update_order', 'regenerate', 'create_order'],
+          enum: ['update_order', 'regenerate', 'create_order', 'update_customer_profile'],
         },
         project: { type: 'string', enum: ['asksabrina', 'astroloversketch'] },
         ref: {
@@ -147,6 +147,22 @@ export const csRecoveryTools: Tool[] = [
         order_kind: {
           type: 'string',
           enum: ['main', 'oto1', 'oto2', 'subscription'],
+        },
+        patch: {
+          type: 'object',
+          description:
+            'REQUIRED for action_type=update_customer_profile. Object of customer-profile field → new value. Per-project whitelist (the backend rejects unknown keys naming the offender): asksabrina allows firstName, lastName, fullName, phoneNumber, gender, horoscope, birthday, birthTime, age, martialStatus, country, city. astroloversketch allows firstName, lastName, fullName, phoneNumber, gender, zodiacSign, oppositeZodiacSign, birthday, birthTime, age, maritalStatus, interestedGender, interestedAge, interestedEthnicity, plus nested objects currentResidence and birthPlace (whole object replaced). `age` must be a number, everything else a string, nested objects are plain objects. Inspect the customer_view first so the patch only includes fields that actually need to change — DO NOT pass values that already match.',
+        },
+        regen_ref: {
+          type: 'string',
+          description:
+            'OPTIONAL for action_type=update_customer_profile. Mongo _id of the order whose reading should be auto-regenerated after the profile patch lands. Pick from customer_view.mainOrders[*].ref (most common) or the relevant OTO. Omit to patch-only without regenerating — use that when CS only wants the data fixed but the reading is fine.',
+        },
+        regen_kind: {
+          type: 'string',
+          enum: ['main', 'oto1', 'oto2', 'subscription'],
+          description:
+            'OPTIONAL for action_type=update_customer_profile, paired with regen_ref. The kind of the order to regenerate.',
         },
         payment_meta: {
           type: 'object',

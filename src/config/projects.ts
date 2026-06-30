@@ -53,6 +53,7 @@ const asksabrinaConnector: ProjectConnector = {
       ...input,
       paymentMeta: input.paymentMeta,
     }),
+  updateCustomerProfile: (input) => asksabrina.updateCustomerProfile(input),
 }
 
 const astroSubscriptionRejection = () => {
@@ -93,6 +94,7 @@ const astroloversketchConnector: ProjectConnector = {
       ...(input.billingEmail ? { billingEmail: input.billingEmail } : {}),
     })
   },
+  updateCustomerProfile: (input) => astroloversketch.updateCustomerProfile(input),
 }
 
 // ─── registry ────────────────────────────────────────────────────────────
