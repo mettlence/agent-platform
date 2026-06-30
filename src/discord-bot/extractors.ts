@@ -54,8 +54,19 @@ export function extractReceipts(text: string): string[] {
   for (const m of cleaned.matchAll(RECEIPT_CORE_RE)) {
     const tok = m[0]
     if (!/[A-Z]/.test(tok)) continue
-    if (!/\d/.test(tok)) continue
-    out.add(tok)
+    if (/\d/.test(tok)) {
+      // Mixed letters+digits — almost always a CB receipt. Accept.
+      out.add(tok)
+      continue
+    }
+    // All-letter tokens: ClickBank does issue pure-letter receipts (e.g.
+    // "QYGSMSJE"). They're random-looking so vowel density is very low;
+    // real English words almost always have ≥2 vowels in 6-char-plus
+    // tokens (URGENT, PROBLEM, PAYMENT, REFUND). Accept only when the token
+    // has 0 or 1 vowel — false positives like RHYTHM / SYMPTOM are rare
+    // enough in CS messages to be acceptable.
+    const vowels = (tok.match(/[AEIOU]/g) || []).length
+    if (vowels < 2) out.add(tok)
   }
   return [...out]
 }
@@ -97,7 +108,12 @@ export function extractFreeText(text: string): string {
   let s = stripDiscordMentions(text)
   s = s.replace(EMAIL_RE, ' ')
   s = s.replace(/[Tt]icket\s*=\s*[A-Za-z0-9_-]+/g, ' ')
-  s = s.replace(RECEIPT_CORE_RE, (tok) => (/[A-Z]/.test(tok) && /\d/.test(tok) ? ' ' : tok))
+  s = s.replace(RECEIPT_CORE_RE, (tok) => {
+    if (!/[A-Z]/.test(tok)) return tok
+    if (/\d/.test(tok)) return ' '
+    const vowels = (tok.match(/[AEIOU]/g) || []).length
+    return vowels < 2 ? ' ' : tok
+  })
   for (const kw of ALL_PROJECT_KEYWORDS.keys()) {
     s = s.replace(new RegExp(`\\b${escapeForReplace(kw)}\\b`, 'gi'), ' ')
   }
