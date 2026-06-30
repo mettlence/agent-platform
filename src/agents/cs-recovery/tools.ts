@@ -147,6 +147,8 @@ export const csRecoveryTools: Tool[] = [
         order_kind: {
           type: 'string',
           enum: ['main', 'oto1', 'oto2', 'subscription'],
+          description:
+            'For create_order: derive from productSku. asksabrina main SKUs are `abdt-basic` and `abdt-advanced` — these are ALWAYS kind=main, even when the customer already has a main order on file (second purchases are allowed). For update_order / regenerate: use the kind of the existing order being acted on.',
         },
         patch: {
           type: 'object',
@@ -167,7 +169,7 @@ export const csRecoveryTools: Tool[] = [
         payment_meta: {
           type: 'object',
           description:
-            'Required for update_order AND create_order. Source these fields from the verified ClickBank order: { clickbankReceipt, amount, currency, transactionDate, vendor, productSku }',
+            'Required for update_order AND create_order. Source these fields from the verified ClickBank order: { clickbankReceipt, amount, currency, transactionDate, vendor, productSku }. CRITICAL: order_kind MUST be derived from productSku, NOT guessed by "what does this customer already have". A customer can buy the same main twice — a second main purchase is still kind=main. Project SKU → kind mapping: (asksabrina) `abdt-basic` → main, `abdt-advanced` → main, OTO/subscription SKUs are anything else. Backend rejects with sku_kind_mismatch when productSku is a main SKU but order_kind is oto1/oto2/subscription.',
           properties: {
             clickbankReceipt: { type: 'string' },
             amount: { type: 'number' },
