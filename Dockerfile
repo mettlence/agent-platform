@@ -21,6 +21,8 @@ RUN npm ci --omit=dev && npm cache clean --force
 COPY --from=build /app/dist ./dist
 # Skill markdown is read at runtime via fs.readFile from dist path; ship it.
 COPY src/agents/cs-recovery/skill.md ./dist/agents/cs-recovery/skill.md
+# Usage doc is attached to intro replies; read from cwd/docs at runtime.
+COPY docs ./docs
 
 EXPOSE 3000
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s \

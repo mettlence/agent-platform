@@ -2,6 +2,10 @@
 
 Multi-project agent service. First agent: `cs-recovery` — recovers customer orders that failed backend payment validation. Triggered on-demand by CS team via Discord.
 
+**Docs:**
+- [`docs/USAGE.md`](docs/USAGE.md) — for CS + operators using the Discord bot day-to-day.
+- [`docs/AGENT_GUIDE.md`](docs/AGENT_GUIDE.md) — for a dev or AI agent extending the platform.
+
 ## Status
 
 MVP scaffold. Ready for local dev once `.env` is filled. EC2 deploy via Docker. Discord bot connects on startup; first command to try: `!help`.

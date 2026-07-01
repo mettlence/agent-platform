@@ -12,6 +12,7 @@ import {
   stripDiscordMentions,
   type ExtractedTokens,
 } from '@/discord-bot/extractors.js'
+import { isIntroRequest, sendIntroReply } from './introduce.js'
 
 /**
  * Natural-language entrypoint. Triggered when a user @-mentions the bot —
@@ -67,11 +68,17 @@ export async function handleMentionCommand(message: Message): Promise<void> {
   }
 
   if (!hasUsable(tokens)) {
+    const stripped = stripDiscordMentions(message.content).trim()
+    if (isIntroRequest(stripped)) {
+      await sendIntroReply(message)
+      return
+    }
     await message.reply(
       [
         "I can't see a receipt or email to work from.",
         'Try: `@bot <receipt>` · `@bot <email>` · `@bot <receipt> <email>`',
         'Or reply to a message that already contains one with `@bot fix this`.',
+        'Not sure what I do? `@bot introduce yourself`.',
       ].join('\n'),
     )
     return
