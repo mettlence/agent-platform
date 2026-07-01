@@ -35,6 +35,16 @@ export function stopPendingMonitorLoop(): void {
   }
 }
 
+/**
+ * Fire the tick check right now instead of waiting for the next 60s poll.
+ * Safe to call any time — the `running` guard makes concurrent calls a no-op.
+ * Used from the reaction handler on ✅ so tick 1 lands within seconds instead
+ * of up to a minute later.
+ */
+export function kickPendingMonitorLoop(): void {
+  tickOnce().catch((err) => log.error({ err }, 'kicked tick threw'))
+}
+
 async function tickOnce(): Promise<void> {
   if (running) return
   running = true

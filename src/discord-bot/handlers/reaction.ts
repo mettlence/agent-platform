@@ -5,6 +5,7 @@ import { findByMessageId, resolveApproval } from '@/shared/state/approvals.js'
 import { executeApprovedAction, type DraftAction } from '@/agents/cs-recovery/executor.js'
 import { postToThread } from '@/shared/connectors/discord.js'
 import { createMonitor } from '@/shared/state/monitors.js'
+import { kickPendingMonitorLoop } from '@/agents/pending-monitor/loop.js'
 import type { ProjectKey } from '@/config/projects.js'
 
 const log = pino({ name: 'reaction-handler' })
@@ -75,11 +76,14 @@ export async function handleReactionAdd(
         [
           `📡 Monitor scheduled.`,
           `- Projects: **${projects.join(', ')}**`,
-          `- Interval: every ${intervalHours}h`,
+          `- Interval: every ${humanizeDurationH(intervalHours)}`,
+          `- Ticks: **${monitor.expected_ticks}** over ${humanizeDurationH(durationHours)}`,
           `- Expires: <t:${Math.floor(monitor.expires_at.getTime() / 1000)}:R>`,
-          '- First tick fires within the next minute.',
+          '- First tick fires within seconds.',
         ].join('\n'),
       )
+      // Kick the loop so tick 1 lands promptly instead of waiting up to 60s.
+      kickPendingMonitorLoop()
     } catch (err) {
       log.error({ err, messageId }, 'schedule pending-monitor failed')
       await postToThread(
@@ -143,5 +147,10 @@ export async function handleReactionAdd(
       `❌ Execution threw: \`${err instanceof Error ? err.message : String(err)}\``,
     )
   }
+}
+
+function humanizeDurationH(h: number): string {
+  if (h >= 1) return `${h % 1 === 0 ? h : h.toFixed(1)}h`
+  return `${Math.round(h * 60)}m`
 }
 

@@ -51,7 +51,8 @@ export async function runTick(monitor: PendingMonitor): Promise<void> {
   }
 
   const tickNumber = claimed.tick_count + 1
-  const totalTicks = Math.ceil(monitor.duration_hours / monitor.interval_hours)
+  const totalTicks = monitor.expected_ticks ?? Math.max(1, Math.ceil(monitor.duration_hours / monitor.interval_hours))
+  const isFinalTick = tickNumber >= totalTicks
 
   const results = await Promise.all(
     monitor.projects.map((p) => runOneProject(p, monitor)),
@@ -81,6 +82,7 @@ export async function runTick(monitor: PendingMonitor): Promise<void> {
     monitor,
     tickNumber,
     totalTicks,
+    isFinalTick,
     results,
     firstSeenAt: nextFirstSeen,
     now,
@@ -89,13 +91,11 @@ export async function runTick(monitor: PendingMonitor): Promise<void> {
     log.error({ err, threadId: monitor.thread_id }, 'failed to post tick report')
   })
 
-  // Post-tick: has the schedule elapsed?
-  const nextRun = new Date(now.getTime() + monitor.interval_hours * 3600_000)
-  if (nextRun > monitor.expires_at) {
+  if (isFinalTick) {
     await markExpired(monitor._id)
     await postToThread(
       monitor.thread_id,
-      `🏁 Monitor completed — ran ${tickNumber} tick${tickNumber === 1 ? '' : 's'} over ${monitor.duration_hours}h. No further checks.`,
+      `🏁 Monitor completed — ran ${tickNumber} tick${tickNumber === 1 ? '' : 's'} over ${humanizeHours(monitor.duration_hours)}. No further checks.`,
     ).catch(() => {})
   }
 }
@@ -131,11 +131,12 @@ function formatReport(args: {
   monitor: PendingMonitor
   tickNumber: number
   totalTicks: number
+  isFinalTick: boolean
   results: ProjectResult[]
   firstSeenAt: PendingMonitor['first_seen_at']
   now: Date
 }): string {
-  const { monitor, tickNumber, totalTicks, results, firstSeenAt, now } = args
+  const { monitor, tickNumber, totalTicks, isFinalTick, results, firstSeenAt, now } = args
   const lines: string[] = []
   lines.push(
     `📊 **Pending-orders check** · tick ${tickNumber}/${totalTicks} · ${humanizeHours(monitor.interval_hours)} interval`,
@@ -190,10 +191,9 @@ function formatReport(args: {
   }
 
   const nextRun = new Date(now.getTime() + monitor.interval_hours * 3600_000)
-  const isFinal = nextRun > monitor.expires_at
   lines.push('')
   lines.push(
-    isFinal
+    isFinalTick
       ? `_This was the final tick._`
       : `_Next check: <t:${Math.floor(nextRun.getTime() / 1000)}:t>_`,
   )

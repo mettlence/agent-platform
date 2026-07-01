@@ -18,6 +18,14 @@ export interface PendingMonitor {
   projects: ProjectKey[]
   interval_hours: number
   duration_hours: number
+  /**
+   * Total ticks this monitor promises to run. Computed once at creation
+   * (Math.ceil(duration / interval)). We complete on `tick_count >=
+   * expected_ticks` rather than on `next_run_at > expires_at` so schedule
+   * timing races (loop phase, poll delay) can't shave a tick off the
+   * count the draft advertised.
+   */
+  expected_ticks: number
   started_at: Date
   expires_at: Date
   next_run_at: Date
@@ -49,11 +57,13 @@ export async function createMonitor(input: {
   const now = new Date()
   const expires = new Date(now.getTime() + input.duration_hours * 3600_000)
   const ttl = new Date(expires.getTime() + GRACE_DAYS * 86_400_000)
+  const expectedTicks = Math.max(1, Math.ceil(input.duration_hours / input.interval_hours))
   const doc: PendingMonitor = {
     thread_id: input.thread_id,
     projects: input.projects,
     interval_hours: input.interval_hours,
     duration_hours: input.duration_hours,
+    expected_ticks: expectedTicks,
     started_at: now,
     expires_at: expires,
     // Fire the first tick immediately so the user sees value on ✅.
