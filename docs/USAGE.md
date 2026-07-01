@@ -185,8 +185,16 @@ Explicit command form:
 !monitor both every 4h for 24h
 ```
 
-Bounds: interval 1h–24h, duration 1h–7d, duration ≥ one interval. Projects
-recognized: `asksabrina`, `astroloversketch`, or `both`/`semua`/`all`.
+Bounds: interval 1min–24h, duration 1min–7d, duration ≥ one interval.
+Sub-hour intervals exist mainly for testing — real monitors should stay at
+hours-scale. Projects recognized: `asksabrina`, `astroloversketch`, or
+`both`/`semua`/`all`.
+
+Quick test:
+```
+@bot monitor pending both every 2m for 10m
+```
+(6 ticks over 10 minutes — enough to see the baseline-to-diff transition.)
 
 The bot creates a thread, posts a preview of what it's about to schedule
 (projects, interval, total ticks, expiry), and waits for ✅.

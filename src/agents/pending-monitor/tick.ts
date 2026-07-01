@@ -138,7 +138,7 @@ function formatReport(args: {
   const { monitor, tickNumber, totalTicks, results, firstSeenAt, now } = args
   const lines: string[] = []
   lines.push(
-    `📊 **Pending-orders check** · tick ${tickNumber}/${totalTicks} · ${monitor.interval_hours}h interval`,
+    `📊 **Pending-orders check** · tick ${tickNumber}/${totalTicks} · ${humanizeHours(monitor.interval_hours)} interval`,
   )
 
   for (const r of results) {
@@ -212,4 +212,9 @@ function formatAge(min: number): string {
   const h = Math.floor(min / 60)
   const m = min % 60
   return m ? `${h}h${m}m` : `${h}h`
+}
+
+function humanizeHours(h: number): string {
+  if (h >= 1) return `${h % 1 === 0 ? h : h.toFixed(1)}h`
+  return `${Math.round(h * 60)}m`
 }

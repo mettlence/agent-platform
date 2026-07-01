@@ -55,13 +55,19 @@ describe('parseMonitorRequest', () => {
     expect(r.request.duration_hours).toBe(24)
   })
 
-  it('parses minute-based intervals but rejects sub-hour by policy', () => {
-    // Minute syntax parses cleanly (0.5h), but the bounds check rejects
-    // sub-hour intervals — real monitors should be hours-scale.
+  it('parses minute-based intervals (down to 1min for testing)', () => {
     const r = parseMonitorRequest('monitor pending asksabrina every 30m for 4h')
-    expect(r.ok).toBe(false)
-    if (r.ok) return
-    expect(r.error).toMatch(/too small/i)
+    expect(r.ok).toBe(true)
+    if (!r.ok) return
+    expect(r.request.interval_hours).toBe(0.5)
+  })
+
+  it('parses minute-based duration', () => {
+    const r = parseMonitorRequest('monitor pending asksabrina every 1m for 10m')
+    expect(r.ok).toBe(true)
+    if (!r.ok) return
+    expect(r.request.interval_hours).toBeCloseTo(1 / 60, 6)
+    expect(r.request.duration_hours).toBeCloseTo(10 / 60, 6)
   })
 
   it('parses day-based durations', () => {

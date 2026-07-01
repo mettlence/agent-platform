@@ -19,9 +19,12 @@ export type MonitorParseResult =
   | { ok: true; request: MonitorRequest }
   | { ok: false; error: string }
 
-const MIN_INTERVAL_H = 1
+// The tick loop polls every 60s, so 1 minute is the smallest interval that
+// makes practical sense. Sub-hour intervals exist mainly for testing —
+// operators using it for real should stay at hours-scale.
+const MIN_INTERVAL_H = 1 / 60 // 1 minute
 const MAX_INTERVAL_H = 24
-const MIN_DURATION_H = 1
+const MIN_DURATION_H = 1 / 60 // 1 minute
 const MAX_DURATION_H = 168 // 7 days
 
 const INTENT_PATTERNS = [
@@ -141,6 +144,7 @@ function extractDuration(text: string): number | null {
   const patterns = [
     /(?:for|selama|over|during|untuk|dalam)\s+(\d+(?:\.\d+)?)\s*(h|hour|hours|jam)\b/i,
     /(?:for|selama|over|during|untuk|dalam)\s+(\d+(?:\.\d+)?)\s*(d|day|days|hari)\b/i,
+    /(?:for|selama|over|during|untuk|dalam)\s+(\d+(?:\.\d+)?)\s*(m|min|mins|minute|minutes|menit)\b/i,
     /(\d+(?:\.\d+)?)\s*(h|hour|hours|jam)\s+kedepan\b/i,
     /(?:next|berikutnya)\s+(\d+(?:\.\d+)?)\s*(h|hour|hours|jam)\b/i,
   ]
@@ -149,7 +153,9 @@ function extractDuration(text: string): number | null {
     if (m) {
       const n = Number(m[1])
       const unit = m[2]!.toLowerCase()
-      return isDays(unit) ? n * 24 : n
+      if (isMinutes(unit)) return n / 60
+      if (isDays(unit)) return n * 24
+      return n
     }
   }
   return null
