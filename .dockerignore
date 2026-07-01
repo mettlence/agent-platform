@@ -12,5 +12,6 @@ coverage
 .git
 .gitignore
 README.md
-docs
+# docs/ is intentionally NOT ignored — USAGE.md is attached to the
+# bot's intro reply and must exist at /app/docs/USAGE.md at runtime.
 *.test.ts
