@@ -4,6 +4,10 @@ import { env } from '@/config/env.js'
 import { app } from '@/api/server.js'
 import { startDiscordBot } from '@/discord-bot/client.js'
 import { connectMongo, closeMongo } from '@/shared/db/mongo.js'
+import {
+  startPendingMonitorLoop,
+  stopPendingMonitorLoop,
+} from '@/agents/pending-monitor/loop.js'
 
 const log = pino({ level: env.NODE_ENV === 'production' ? 'info' : 'debug' })
 
@@ -14,12 +18,15 @@ async function main(): Promise<void> {
   await startDiscordBot()
   log.info('discord bot started')
 
+  startPendingMonitorLoop()
+
   serve({ fetch: app.fetch, port: env.PORT }, (info) => {
     log.info({ port: info.port }, 'http server started')
   })
 
   const shutdown = async (signal: string): Promise<void> => {
     log.info({ signal }, 'shutting down')
+    stopPendingMonitorLoop()
     await closeMongo()
     process.exit(0)
   }

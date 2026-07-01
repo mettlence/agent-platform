@@ -54,6 +54,8 @@ const asksabrinaConnector: ProjectConnector = {
       paymentMeta: input.paymentMeta,
     }),
   updateCustomerProfile: (input) => asksabrina.updateCustomerProfile(input),
+  listPendingReadings: (opts) =>
+    asksabrina.listPendingReadings(opts as { kind?: 'all' | UnifiedProduct['kind']; limit?: number }),
 }
 
 const astroSubscriptionRejection = () => {
@@ -95,6 +97,16 @@ const astroloversketchConnector: ProjectConnector = {
     })
   },
   updateCustomerProfile: (input) => astroloversketch.updateCustomerProfile(input),
+  listPendingReadings: async (opts) => {
+    // Astrolover doesn't support subscription kind — coerce to 'all' upstream if
+    // caller asks for it, since the backend will reject it.
+    if (opts?.kind === 'subscription') {
+      return { kind: 'subscription', count: 0, items: [] }
+    }
+    return astroloversketch.listPendingReadings(
+      opts as { kind?: 'all' | 'main' | 'oto1' | 'oto2'; limit?: number },
+    )
+  },
 }
 
 // ─── registry ────────────────────────────────────────────────────────────

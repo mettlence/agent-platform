@@ -163,6 +163,67 @@ The action was not applied — that's the safety design working.
 - **Bot posted a draft in the wrong thread** → don't ✅. Ping the dev — the
   approval is keyed by Discord message ID so nothing has been executed yet.
 
+## Monitoring pending order generation
+
+The bot can also run a scheduled check for paid orders whose reading has
+not been generated yet. Useful when you want to catch stuck generation
+without polling the admin panel yourself.
+
+### Start a monitor
+
+Natural form:
+
+```
+@bot monitor pending asksabrina every 4h for 24h
+@bot cronjob check pending both per 2h selama 12 jam
+```
+
+Explicit command form:
+
+```
+!monitor asksabrina every 4h for 24h
+!monitor both every 4h for 24h
+```
+
+Bounds: interval 1h–24h, duration 1h–7d, duration ≥ one interval. Projects
+recognized: `asksabrina`, `astroloversketch`, or `both`/`semua`/`all`.
+
+The bot creates a thread, posts a preview of what it's about to schedule
+(projects, interval, total ticks, expiry), and waits for ✅.
+
+### What each tick reports
+
+On ✅, the first tick fires immediately (baseline). Subsequent ticks fire
+every N hours. Each report shows, per project:
+
+- **Total pending** now, and the delta since last tick (`+3 new`, `-1 resolved`)
+- **⚠️ Stuck** — items that stayed pending across ticks and have been paid
+  for more than 30 minutes. This is your action list.
+- **✨ New this tick** — items that just showed up. Usually fine — the
+  generation queue is picking them up. Watch them across ticks.
+- **✅ Resolved** — items that were pending last tick and are now gone.
+
+The next check timestamp is included at the bottom (`<t:...>` renders as a
+localized time in Discord).
+
+### Stopping early
+
+Inside the monitor thread:
+
+```
+!stop-monitor
+```
+
+The bot confirms and stops firing further ticks. Auto-stop also happens
+when the duration elapses.
+
+### One monitor per thread
+
+Only one active monitor per Discord thread. If you try to start a second
+one in the same thread, the bot rejects it and points you at
+`!stop-monitor` first. Start a fresh thread for a different schedule
+(different interval, different projects).
+
 ## What the bot will not do
 
 - Talk to the customer.

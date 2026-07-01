@@ -46,6 +46,9 @@ src/
     tools.ts                  tool schemas the LLM sees
     index.ts                  the agent loop (tool dispatch, budget checks)
     executor.ts               post-approval mutations + re-verify
+  agents/pending-monitor/
+    tick.ts                   one-tick: fetch, diff, format, post
+    loop.ts                   1min setInterval polling loop
   shared/
     llm/client.ts             LLMClient interface + Claude impl
     connectors/
@@ -246,10 +249,46 @@ Keep going when:
 - "Reading link 404" reported by CS → the async regen job. Look at
   `check_regeneration_job` and the project's job endpoint.
 
+## The pending-monitor agent
+
+Second agent, deliberately narrower than cs-recovery: it schedules a
+recurring read-only check for paid-but-not-generated orders and posts a
+diff report each tick.
+
+- Source of truth is `pending_monitors` in Mongo. One row per active
+  schedule; TTL retains expired/stopped rows for 7d for post-mortems.
+- The tick loop (`loop.ts`) polls every 60s. Each due monitor is claimed
+  atomically via `claimTick` (advances `next_run_at`, bumps `tick_count`)
+  so racing bot instances can't double-fire.
+- The tick itself (`tick.ts`) hits `listPendingReadings` per project,
+  diffs refs against the prior snapshot, and posts. Per-project backend
+  failures are surfaced in the report but do not abort the tick for the
+  other project.
+- **No mutations.** The monitor never writes to a project DB. The only
+  DB touch is the `pending_monitors` row itself. That's why we schedule
+  it once with ✅ (the commitment to run) and let ticks fire freely —
+  the safety invariant ("no writes without ✅") still holds because
+  there are no writes to gate.
+
+Extending it — most likely wants:
+- Signal enrichment: add `activeJob` to each item on the backend
+  endpoint so the report can say "stuck in queue" vs "never enqueued"
+  instead of just "still pending across N ticks".
+- Escalation trigger: when a stuck item passes a threshold (e.g. 2h
+  across 3 ticks), auto-open a cs-recovery ticket for that ref. Take
+  care — that becomes a mutation path, so it must go through
+  `pending_approvals` like any other mutation.
+- Multi-thread monitors: today one active monitor per thread by
+  design. Loosen only when you have a concrete reason.
+
 ## What NOT to build here
 
 - Customer-facing anything.
-- A general workflow engine or DAG runner.
+- A general workflow engine or DAG runner (pending-monitor is
+  deliberately single-purpose).
 - A per-brand config-file abstraction — the direct-code branch per brand
   is intentional. When there are 4+ brands, revisit.
 - A retry queue for approvals — human ✅ is the trigger by design.
+- Arbitrary "schedule any tool by request". If you want that, first
+  design an approval model that survives the fact that the approver
+  may be asleep when the fire time comes.

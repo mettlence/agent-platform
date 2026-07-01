@@ -7,6 +7,10 @@ import { handleCsCommand } from './handlers/cs-command.js'
 import { handleMentionCommand } from './handlers/mention-command.js'
 import { handleThreadContinuation } from './handlers/thread-continue.js'
 import { sendIntroReply } from './handlers/introduce.js'
+import {
+  handleMonitorRequest,
+  handleStopMonitor,
+} from './handlers/monitor-command.js'
 
 const log = pino({ name: 'router' })
 const PREFIX = '!'
@@ -65,6 +69,13 @@ export async function routeMessage(message: Message): Promise<void> {
     case 'cs':
       await handleCsCommand(message, args)
       return
+    case 'monitor':
+      await handleMonitorRequest(message, args.join(' '))
+      return
+    case 'stop-monitor':
+    case 'stopmonitor':
+      await handleStopMonitor(message)
+      return
     case 'about':
     case 'introduce':
       await sendIntroReply(message)
@@ -80,6 +91,8 @@ export async function routeMessage(message: Message): Promise<void> {
           '  `@bot <follow-up>`  (inside a cs-recovery thread) — continues the existing conversation',
           '',
           '`!cs <ticket-id> email=... [receipt=...] [project=asksabrina|astroloversketch] [complaint="..."]` — explicit form. Project auto-detected from receipt.',
+          '`!monitor <projects> every Nh for Mh` — schedule pending-order checks. Also `@bot monitor pending both every 4h for 24h`.',
+          '`!stop-monitor` — stop the monitor in the current thread.',
           '`!about` / `!introduce` / `@bot introduce yourself` — what I am, how to use me (attaches full guide).',
           '`!help` — show this',
         ].join('\n'),

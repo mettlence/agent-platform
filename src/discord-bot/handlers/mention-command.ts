@@ -13,6 +13,7 @@ import {
   type ExtractedTokens,
 } from '@/discord-bot/extractors.js'
 import { isIntroRequest, sendIntroReply } from './introduce.js'
+import { handleMonitorRequest, looksLikeMonitorRequest } from './monitor-command.js'
 
 /**
  * Natural-language entrypoint. Triggered when a user @-mentions the bot —
@@ -35,12 +36,16 @@ const CONTEXT_HISTORY_LIMIT = 20
 export async function handleMentionCommand(message: Message): Promise<void> {
   const ownTokens = extractAll(message.content)
 
-  // Intro short-circuit runs against the user's OWN message only, and BEFORE
-  // history/reply expansion. Otherwise a channel with stale receipt/email
-  // context bleeds into "who are you?" and the intro is skipped in favour of
-  // an unrelated ticket flow.
+  // Intro + monitor short-circuits run against the user's OWN message only,
+  // and BEFORE history/reply expansion. Otherwise a channel with stale
+  // receipt/email context bleeds into "who are you?" or "monitor pending"
+  // and the intent is skipped in favour of an unrelated ticket flow.
+  const stripped = stripDiscordMentions(message.content).trim()
+  if (looksLikeMonitorRequest(stripped)) {
+    await handleMonitorRequest(message, stripped)
+    return
+  }
   if (!hasUsable(ownTokens)) {
-    const stripped = stripDiscordMentions(message.content).trim()
     if (isIntroRequest(stripped)) {
       await sendIntroReply(message)
       return

@@ -1,8 +1,11 @@
 import type { MessageReaction, PartialMessageReaction, User, PartialUser } from 'discord.js'
+import { ObjectId } from 'mongodb'
 import pino from 'pino'
 import { findByMessageId, resolveApproval } from '@/shared/state/approvals.js'
 import { executeApprovedAction, type DraftAction } from '@/agents/cs-recovery/executor.js'
 import { postToThread } from '@/shared/connectors/discord.js'
+import { createMonitor } from '@/shared/state/monitors.js'
+import type { ProjectKey } from '@/config/projects.js'
 
 const log = pino({ name: 'reaction-handler' })
 
@@ -50,8 +53,45 @@ export async function handleReactionAdd(
 
   await postToThread(approval.thread_id, `✅ Approved by <@${userId}>. Executing...`)
 
+  const draftedAction = approval.drafted_action as { action_type?: string } & Record<string, unknown>
+
+  // pending-monitor schedules skip the cs-recovery executor entirely — no
+  // customer mutation, just a Mongo insert plus a friendly confirmation.
+  if (draftedAction.action_type === 'schedule_pending_monitor') {
+    try {
+      const projects = draftedAction.projects as ProjectKey[]
+      const intervalHours = Number(draftedAction.interval_hours)
+      const durationHours = Number(draftedAction.duration_hours)
+      const monitor = await createMonitor({
+        thread_id: approval.thread_id,
+        projects,
+        interval_hours: intervalHours,
+        duration_hours: durationHours,
+        created_by_user_id: userId,
+        created_by_approval_id: approval._id as ObjectId,
+      })
+      await postToThread(
+        approval.thread_id,
+        [
+          `📡 Monitor scheduled.`,
+          `- Projects: **${projects.join(', ')}**`,
+          `- Interval: every ${intervalHours}h`,
+          `- Expires: <t:${Math.floor(monitor.expires_at.getTime() / 1000)}:R>`,
+          '- First tick fires within the next minute.',
+        ].join('\n'),
+      )
+    } catch (err) {
+      log.error({ err, messageId }, 'schedule pending-monitor failed')
+      await postToThread(
+        approval.thread_id,
+        `❌ Failed to schedule monitor: \`${err instanceof Error ? err.message : String(err)}\``,
+      )
+    }
+    return
+  }
+
   try {
-    const draft = approval.drafted_action as unknown as DraftAction
+    const draft = draftedAction as unknown as DraftAction
     const result = await executeApprovedAction({
       draft,
       thread_id: approval.thread_id,

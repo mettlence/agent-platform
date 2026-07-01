@@ -137,6 +137,7 @@ Add new project = add vendor mapping + new connector under `src/shared/connector
 | `pending_approvals` | Draft actions awaiting human ✅ | 7d TTL on `expires_at` |
 | `idempotency_keys` | Prevent double-execute | 24h TTL on `ttl_at` |
 | `agent_lessons` | Project-specific patterns/rules read into prompts | forever (curate manually) |
+| `pending_monitors` | Active + expired scheduled pending-order monitors | 7d TTL on `ttl_at` (grace window past `expires_at`) |
 
 Create indexes (run once against the dedicated DB):
 
@@ -150,18 +151,22 @@ db.pending_approvals.createIndex({ discord_message_id: 1 })
 db.pending_approvals.createIndex({ status: 1, expires_at: 1 })
 db.idempotency_keys.createIndex({ ttl_at: 1 }, { expireAfterSeconds: 0 })
 db.agent_lessons.createIndex({ project: 1, agent: 1, active: 1 })
+db.pending_monitors.createIndex({ status: 1, next_run_at: 1 })
+db.pending_monitors.createIndex({ thread_id: 1, status: 1 })
+db.pending_monitors.createIndex({ ttl_at: 1 }, { expireAfterSeconds: 0 })
 ```
 
 ## What's wired
 
 - LLM client abstraction (Claude impl, swappable)
-- MongoDB connection + state collections (threads, actions, approvals, idempotency, lessons)
+- MongoDB connection + state collections (threads, actions, approvals, idempotency, lessons, pending_monitors)
 - ClickBank connector (real v1.3 API — `Authorization: API-XXX`)
-- AskSabrina connector against the existing `/api/agent/*` endpoints (lookup, ensure-reading, jobs, mark-paid)
+- AskSabrina + astroloversketch connectors against the existing `/api/agent/*` endpoints (lookup, ensure-reading, jobs, mark-paid, pending-readings)
 - Payment-verify gate (transaction type / email / amount / vendor→project)
 - CS-recovery agent loop (investigate → draft → propose)
 - Executor with re-verify (gate re-runs at execution time)
-- Discord bot: `!cs` command + reaction-based approval (✅ / ❌)
+- Pending-monitor agent — scheduled read-only checks for paid-but-not-generated orders, per-tick diff report to Discord
+- Discord bot: `!cs`, `!monitor`, `!stop-monitor`, `!about`, `!introduce`, `!help` + reaction-based approval (✅ / ❌)
 - HTTP API: `POST /cs-recovery/trigger`, `GET /health`
 - Tests for the payment gate (vitest)
 

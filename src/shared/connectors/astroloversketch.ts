@@ -212,6 +212,33 @@ export interface UpdateCustomerProfileResponse {
   after: Record<string, unknown>
 }
 
+export interface PendingReadingsResponse {
+  kind: string
+  count: number
+  items: Array<{
+    kind: 'main' | 'oto1' | 'oto2'
+    ref: string
+    orderId: string | null
+    orderIdClickBank?: string | null
+    createdAt: string
+    customerEmail: string | null
+    customerFirstName: string | null
+  }>
+}
+
+export async function listPendingReadings(
+  opts: { kind?: 'all' | 'main' | 'oto1' | 'oto2'; limit?: number } = {},
+): Promise<PendingReadingsResponse> {
+  const url = new URL(`${baseUrl()}/pending-readings`)
+  if (opts.kind) url.searchParams.set('kind', opts.kind)
+  if (opts.limit) url.searchParams.set('limit', String(opts.limit))
+  const res = await fetch(url, { headers: headers() })
+  if (!res.ok) {
+    throw new Error(`astroloversketch listPendingReadings failed: ${res.status} ${await res.text()}`)
+  }
+  return (await res.json()) as PendingReadingsResponse
+}
+
 export async function updateCustomerProfile(
   input: UpdateCustomerProfileInput,
 ): Promise<UpdateCustomerProfileResponse> {

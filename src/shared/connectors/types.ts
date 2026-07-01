@@ -141,6 +141,36 @@ export interface UpdateCustomerProfileResponse {
 }
 
 /**
+ * One row from GET /api/agent/pending-readings — a paid order whose reading
+ * has not been generated yet. Shared shape across brands; brand-specific
+ * columns are optional so consumers can feature-detect.
+ */
+export interface PendingReadingItem {
+  kind: OrderKind
+  ref: string
+  orderId: string | null
+  orderIdClickBank?: string | null
+  /** Asksabrina main-only. */
+  engineVersion?: 'v1' | 'v2'
+  createdAt: string
+  customerEmail: string | null
+  customerFirstName: string | null
+}
+
+export interface ListPendingReadingsOptions {
+  /** Default 'all'. asksabrina supports 'subscription'; astroloversketch does not. */
+  kind?: OrderKind | 'all'
+  /** 1..200, default 50. Per-kind cap on the backend. */
+  limit?: number
+}
+
+export interface ListPendingReadingsResponse {
+  kind: string
+  count: number
+  items: PendingReadingItem[]
+}
+
+/**
  * The full surface every project's connector must satisfy. New brands wire in
  * by implementing this and registering in src/config/projects.ts.
  *
@@ -163,4 +193,5 @@ export interface ProjectConnector {
   markOrderPaid(input: MarkOrderPaidInput): Promise<MarkOrderPaidResponse>
   createOrder(input: CreateOrderInput): Promise<CreateOrderResponse>
   updateCustomerProfile(input: UpdateCustomerProfileInput): Promise<UpdateCustomerProfileResponse>
+  listPendingReadings(opts?: ListPendingReadingsOptions): Promise<ListPendingReadingsResponse>
 }
