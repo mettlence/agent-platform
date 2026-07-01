@@ -26,6 +26,14 @@ const schema = z.object({
     .min(1)
     .transform((v) => v.split(',').map((s) => s.trim()).filter(Boolean))
     .refine((arr) => arr.length > 0, 'DISCORD_CS_CHANNEL_IDS must contain at least one ID'),
+  // CSV of channel IDs where monitor commands post inline instead of creating
+  // a thread. Must be a subset of DISCORD_CS_CHANNEL_IDS (the router filter
+  // still applies). Empty / unset = every channel uses threaded mode. Optional.
+  DISCORD_MONITOR_CHANNEL_IDS: z
+    .string()
+    .optional()
+    .default('')
+    .transform((v) => v.split(',').map((s) => s.trim()).filter(Boolean)),
   DISCORD_CS_LEAD_ROLE_ID: z.string().optional(),
 
   // Single ClickBank API key (no separate dev key as of 2023-07-27).

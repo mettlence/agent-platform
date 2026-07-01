@@ -192,8 +192,11 @@ async function proposeGenerateForStuck(args: {
 
   const client = getDiscordClient()
   const channel = await client.channels.fetch(monitor.thread_id).catch(() => null)
-  if (!channel || !channel.isThread()) {
-    log.warn({ threadId: monitor.thread_id }, 'monitor thread missing — skipping proposals')
+  // Accept either a Thread (default flow) or a plain text channel (inline
+  // mode). Both have identical send/react semantics; the isThread gate is
+  // the only thing that changes.
+  if (!channel || !('send' in channel)) {
+    log.warn({ threadId: monitor.thread_id }, 'monitor target channel missing — skipping proposals')
     return 0
   }
 

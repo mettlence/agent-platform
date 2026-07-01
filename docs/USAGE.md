@@ -261,12 +261,30 @@ Inside the monitor thread:
 The bot confirms and stops firing further ticks. Auto-stop also happens
 when the duration elapses.
 
-### One monitor per thread
+### One monitor per thread (or per channel in inline mode)
 
 Only one active monitor per Discord thread. If you try to start a second
 one in the same thread, the bot rejects it and points you at
 `!stop-monitor` first. Start a fresh thread for a different schedule
 (different interval, different projects).
+
+### Inline mode — dedicated monitor channels
+
+Ops can nominate one or more channels as **monitor channels** via the
+`DISCORD_MONITOR_CHANNEL_IDS` env var. When a `!monitor` / `@bot monitor`
+runs in one of those channels, the bot **does not create a thread** —
+the draft, tick reports, and auto-proposals all post inline in the
+channel. `!stop-monitor` in the same channel stops it.
+
+Rules in inline mode:
+- **1 active monitor per channel.** Second `!monitor` in the same
+  channel is rejected until you stop the first with `!stop-monitor`.
+- Other commands (`!cs`, `@bot ABC12345`) still work in the same
+  channel — they create their own threads as usual. So the channel
+  ends up as: (monitor reports inline) + (any recovery threads that
+  happened to be started there).
+- Best practice: keep the monitor channel dedicated. Do recovery work
+  in a general CS channel to keep the monitor channel scannable.
 
 ## What the bot will not do
 

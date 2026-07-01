@@ -3,6 +3,8 @@ import {
   GatewayIntentBits,
   Partials,
   type Message,
+  type SendableChannels,
+  type TextChannel,
   type ThreadChannel,
 } from 'discord.js'
 import { env } from '@/config/env.js'
@@ -52,30 +54,38 @@ export function chunkMessage(content: string, max = SAFE_CONTENT_LIMIT): string[
 }
 
 /**
- * Send a message (possibly chunked) to a thread. Returns the LAST message sent
- * so callers can attach reactions / approval IDs to the message users will see
- * the action prompt on.
+ * A "post target" is either a Discord thread or a regular text channel. Both
+ * have identical `.send()` semantics, and monitor inline-mode uses a plain
+ * text channel while cs-recovery uses a thread. Keeping a union here lets
+ * both call sites share the send/react/chunk plumbing.
+ */
+export type PostTarget = ThreadChannel | TextChannel | SendableChannels
+
+/**
+ * Send a message (possibly chunked) to a thread or text channel. Returns the
+ * LAST message sent so callers can attach reactions / approval IDs to the
+ * message users will see the action prompt on.
  */
 export async function sendToThread(
-  thread: ThreadChannel,
+  target: PostTarget,
   content: string,
 ): Promise<Message> {
   const chunks = chunkMessage(content)
   let last: Message | null = null
   for (const chunk of chunks) {
-    last = await thread.send(chunk)
+    last = await target.send(chunk)
   }
   return last!
 }
 
 export async function postToThread(
-  threadId: string,
+  targetId: string,
   content: string,
 ): Promise<Message | null> {
   const c = getDiscordClient()
-  const channel = await c.channels.fetch(threadId)
-  if (!channel || !channel.isThread()) return null
-  return sendToThread(channel as ThreadChannel, content)
+  const channel = await c.channels.fetch(targetId)
+  if (!channel || !('send' in channel)) return null
+  return sendToThread(channel as PostTarget, content)
 }
 
 export async function createThreadFromMessage(

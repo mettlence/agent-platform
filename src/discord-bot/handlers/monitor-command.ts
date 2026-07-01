@@ -1,5 +1,6 @@
-import type { Message } from 'discord.js'
+import type { Message, TextChannel } from 'discord.js'
 import pino from 'pino'
+import { env } from '@/config/env.js'
 import { attachDiscordMessageId, createApproval } from '@/shared/state/approvals.js'
 import { findActiveByThread, stopMonitor } from '@/shared/state/monitors.js'
 import {
@@ -7,7 +8,7 @@ import {
   parseMonitorRequest,
   type MonitorRequest,
 } from './monitor-parser.js'
-import { createThreadFromMessage, sendToThread } from '@/shared/connectors/discord.js'
+import { createThreadFromMessage, sendToThread, type PostTarget } from '@/shared/connectors/discord.js'
 
 const log = pino({ name: 'monitor-command' })
 
@@ -44,29 +45,48 @@ export async function handleMonitorRequest(
   const { projects, interval_hours, duration_hours } = parsed.request
   const totalTicks = Math.ceil(duration_hours / interval_hours)
 
-  const thread = await createThreadFromMessage(
-    message,
-    `pending-monitor · ${projects.join('+')} · ${interval_hours}h`,
-  )
+  const inline = env.DISCORD_MONITOR_CHANNEL_IDS.includes(message.channelId)
 
-  // Reject a second monitor targeting the same thread. Threads are 1:1 with
-  // monitors — attaching two would race on next_run_at and double-post.
-  const existing = await findActiveByThread(thread.id)
-  if (existing) {
-    await sendToThread(
-      thread,
-      `⚠️ There's already an active monitor in this thread (expires <t:${Math.floor(existing.expires_at.getTime() / 1000)}:R>). Stop it first with \`!stop-monitor\`.`,
-    )
-    return
+  // In inline mode the target IS the channel, so the "already active?" gate
+  // has to run up front — we can't post the rejection to a fresh thread we
+  // haven't created yet. In threaded mode the check is essentially redundant
+  // (each thread id is fresh) but harmless.
+  if (inline) {
+    const existing = await findActiveByThread(message.channelId)
+    if (existing) {
+      await message.reply(
+        `⚠️ There's already an active monitor in this channel (expires <t:${Math.floor(existing.expires_at.getTime() / 1000)}:R>). Stop it first with \`!stop-monitor\`.`,
+      )
+      return
+    }
+  }
+
+  const target: PostTarget = inline
+    ? (message.channel as TextChannel)
+    : await createThreadFromMessage(
+        message,
+        `pending-monitor · ${projects.join('+')} · ${interval_hours}h`,
+      )
+  const targetId = inline ? message.channelId : (target as { id: string }).id
+
+  if (!inline) {
+    const existing = await findActiveByThread(targetId)
+    if (existing) {
+      await sendToThread(
+        target,
+        `⚠️ There's already an active monitor here (expires <t:${Math.floor(existing.expires_at.getTime() / 1000)}:R>). Stop it first with \`!stop-monitor\`.`,
+      )
+      return
+    }
   }
 
   const now = new Date()
   const expiresAt = new Date(now.getTime() + APPROVAL_TTL_MINUTES * 60_000)
 
-  const draft = buildDraft(parsed.request, totalTicks)
+  const draft = buildDraft(parsed.request, totalTicks, inline)
   const approvalId = await createApproval({
-    thread_id: thread.id,
-    ticket_id: `monitor-${thread.id}`,
+    thread_id: targetId,
+    ticket_id: `monitor-${targetId}`,
     project: projects.join('+'),
     agent: 'pending-monitor',
     customer_email: '',
@@ -80,13 +100,13 @@ export async function handleMonitorRequest(
     expires_at: expiresAt,
   })
 
-  const draftMessage = await sendToThread(thread, draft)
+  const draftMessage = await sendToThread(target, draft)
   await attachDiscordMessageId(approvalId, draftMessage.id)
   await draftMessage.react('✅')
   await draftMessage.react('❌')
 
   log.info(
-    { approvalId, projects, interval_hours, duration_hours, threadId: thread.id },
+    { approvalId, projects, interval_hours, duration_hours, targetId, inline },
     'monitor draft posted',
   )
 }
@@ -105,22 +125,23 @@ export async function handleStopMonitor(message: Message): Promise<void> {
 
 export { looksLikeMonitorRequest }
 
-function buildDraft(req: MonitorRequest, totalTicks: number): string {
+function buildDraft(req: MonitorRequest, totalTicks: number, inline: boolean): string {
   const { projects, interval_hours, duration_hours } = req
+  const where = inline ? 'this channel' : 'this thread'
   return [
     '📋 **Scheduled pending-order monitor**',
     '',
     `- Projects: **${projects.join(', ')}**`,
     `- Interval: every **${humanizeHours(interval_hours)}**`,
     `- Duration: **${humanizeHours(duration_hours)}** (~${totalTicks} check${totalTicks === 1 ? '' : 's'} total)`,
-    `- Reports post to this thread; auto-stops at expiry`,
+    `- Reports post to ${where}; auto-stops at expiry`,
     '',
     'Each tick calls `/api/agent/pending-readings` on the target project(s), diffs against the prior snapshot, and reports:',
     '- 🆕 new items since last tick',
     '- ⚠️ items stuck across ticks (age > 30min)',
     '- ✅ items resolved since last tick',
     '',
-    'React ✅ to start, ❌ to cancel. Stop early with `!stop-monitor` in this thread.',
+    `React ✅ to start, ❌ to cancel. Stop early with \`!stop-monitor\` in ${where}.`,
   ].join('\n')
 }
 
