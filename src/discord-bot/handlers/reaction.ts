@@ -6,7 +6,8 @@ import { executeApprovedAction, type DraftAction } from '@/agents/cs-recovery/ex
 import { postToThread } from '@/shared/connectors/discord.js'
 import { createMonitor } from '@/shared/state/monitors.js'
 import { kickPendingMonitorLoop } from '@/agents/pending-monitor/loop.js'
-import type { ProjectKey } from '@/config/projects.js'
+import { getConnector, type ProjectKey } from '@/config/projects.js'
+import type { OrderKind } from '@/shared/connectors/types.js'
 
 const log = pino({ name: 'reaction-handler' })
 
@@ -55,6 +56,41 @@ export async function handleReactionAdd(
   await postToThread(approval.thread_id, `✅ Approved by <@${userId}>. Executing...`)
 
   const draftedAction = approval.drafted_action as { action_type?: string } & Record<string, unknown>
+
+  // pending-monitor auto-proposal — approve = call ensureReading for one
+  // specific ref. Doesn't go through the cs-recovery executor because it
+  // doesn't touch payment fields; it just kicks generation.
+  if (draftedAction.action_type === 'ensure_reading_from_monitor') {
+    try {
+      const project = draftedAction.project as ProjectKey
+      const ref = String(draftedAction.ref)
+      const kind = draftedAction.kind as OrderKind
+      const email = String(draftedAction.customer_email ?? '')
+      const connector = getConnector(project)
+      const res = await connector.ensureReading(ref, kind, { regenerate: false })
+      const lines: string[] = [
+        `📚 ensure-reading called for \`${ref}\` (${kind}, ${project}).`,
+        `- Status: **${res.status}**`,
+      ]
+      if (res.jobId) lines.push(`- Job id: \`${res.jobId}\``)
+      if (res.readingUrl) lines.push(`- Reading: ${res.readingUrl}`)
+      if (res.downloadUrl) lines.push(`- Download: ${res.downloadUrl}`)
+      if (res.status === 'already_ready') {
+        lines.push('_Was already generated — surfaced above._')
+      } else if (res.status === 'pending' || res.status === 'running') {
+        lines.push(`_Generation is in flight. Reading URL will populate when the job finishes._`)
+      }
+      if (email) lines.push(`_Customer email on record: ${email}._`)
+      await postToThread(approval.thread_id, lines.join('\n'))
+    } catch (err) {
+      log.error({ err, messageId, draftedAction }, 'ensure_reading_from_monitor failed')
+      await postToThread(
+        approval.thread_id,
+        `❌ ensure-reading failed: \`${err instanceof Error ? err.message : String(err)}\``,
+      )
+    }
+    return
+  }
 
   // pending-monitor schedules skip the cs-recovery executor entirely — no
   // customer mutation, just a Mongo insert plus a friendly confirmation.

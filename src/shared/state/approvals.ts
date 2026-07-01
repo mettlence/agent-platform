@@ -56,3 +56,26 @@ export async function resolveApproval(
 export async function findByMessageId(messageId: string): Promise<PendingApproval | null> {
   return collection().findOne({ discord_message_id: messageId })
 }
+
+/**
+ * Dedup lookup for monitor auto-proposals. Returns a still-pending approval
+ * that targets the same {thread, project, ref, kind}, so we don't re-post
+ * the same "recover this order?" prompt on every tick while the operator
+ * has yet to react. Scans `drafted_action.*` — pending_approvals is small
+ * and short-lived (7d TTL) so this is fine without a compound index.
+ */
+export async function findPendingByRef(
+  thread_id: string,
+  project: string,
+  ref: string,
+  kind: string,
+): Promise<PendingApproval | null> {
+  return collection().findOne({
+    thread_id,
+    status: 'pending',
+    'drafted_action.action_type': 'ensure_reading_from_monitor',
+    'drafted_action.project': project,
+    'drafted_action.ref': ref,
+    'drafted_action.kind': kind,
+  })
+}

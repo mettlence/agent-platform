@@ -264,11 +264,13 @@ diff report each tick.
   diffs refs against the prior snapshot, and posts. Per-project backend
   failures are surfaced in the report but do not abort the tick for the
   other project.
-- **No mutations.** The monitor never writes to a project DB. The only
-  DB touch is the `pending_monitors` row itself. That's why we schedule
-  it once with ✅ (the commitment to run) and let ticks fire freely —
-  the safety invariant ("no writes without ✅") still holds because
-  there are no writes to gate.
+- **Read-only ticks; per-item mutations still gated.** The tick itself
+  never writes to a project DB. When it finds items stuck across ticks
+  (age > 30min), it POSTS approval prompts — one per stuck item, capped
+  at 3 per tick, deduped against still-pending prompts for the same
+  ref. The mutation only happens after ✅ (`ensure-reading` via the
+  connector). The "no writes without ✅" invariant still holds — each
+  ref gets its own approval.
 
 Extending it — most likely wants:
 - Signal enrichment: add `activeJob` to each item on the backend

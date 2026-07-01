@@ -214,6 +214,42 @@ every N hours. Each report shows, per project:
 The next check timestamp is included at the bottom (`<t:...>` renders as a
 localized time in Discord).
 
+### Auto-proposed recovery when items get stuck
+
+When an item stays pending across ticks AND is more than 30 minutes old,
+the bot doesn't just report it — it posts an approval prompt below the
+tick report offering to call `ensure-reading` on that specific ref:
+
+```
+🛟 Recover pending order?
+
+- Project: asksabrina
+- Kind: main
+- Ref: 6a194a7d8e61358b56dbc18c
+- Customer: jane@example.com
+- Age: 47min (stuck across ticks)
+
+Proposed action: call ensure-reading — kicks generation if the job is
+missing, no-ops if a job is already running.
+
+React ✅ to trigger, ❌ to ignore.
+```
+
+Reactions:
+- **✅** — bot calls the project's `ensure-reading` and posts the result:
+  `already_ready` (surfaces the URL), `pending`/`running` (surfaces the
+  job id, tells you to check back), or a failure line.
+- **❌** — silently dismisses the prompt.
+- No reaction — approval expires after 60 minutes.
+
+**Caps + dedup:**
+- Max **3** auto-proposals per tick (across all projects). Extras are
+  counted in the tick report ("…and 4 more stuck items not
+  auto-proposed") so you know how many were suppressed.
+- If a prompt for the same `{thread, project, ref, kind}` is still
+  pending on the next tick, the bot does NOT re-post — you won't see
+  the same prompt twice while an operator is deciding.
+
 ### Stopping early
 
 Inside the monitor thread:

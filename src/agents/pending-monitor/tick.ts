@@ -1,13 +1,21 @@
 import pino from 'pino'
-import type { ObjectId } from 'mongodb'
 import { getConnector, type ProjectKey } from '@/config/projects.js'
-import { postToThread } from '@/shared/connectors/discord.js'
-import type { PendingMonitor } from '@/shared/state/monitors.ts'
+import { getDiscordClient, postToThread } from '@/shared/connectors/discord.js'
+import type { PendingMonitor } from '@/shared/state/monitors.js'
 import { claimTick, recordSnapshot, markExpired } from '@/shared/state/monitors.js'
+import { attachDiscordMessageId, createApproval, findPendingByRef } from '@/shared/state/approvals.js'
 
 const log = pino({ name: 'pending-monitor-tick' })
 
 const STUCK_MINUTES = 30
+/**
+ * Cap on auto-proposals emitted per tick, summed across all projects. Keeps
+ * a bad-day incident (dozens of stuck items) from flooding the thread with
+ * approval prompts. Extras are counted in the report so the operator knows
+ * how many were suppressed.
+ */
+const MAX_AUTO_PROPOSALS_PER_TICK = 3
+const AUTO_PROPOSAL_TTL_MINUTES = 60
 
 interface PendingItem {
   kind: string
@@ -78,6 +86,16 @@ export async function runTick(monitor: PendingMonitor): Promise<void> {
 
   await recordSnapshot(monitor._id, nextSnapshot, nextFirstSeen)
 
+  const stuckCandidates = collectStuckCandidates({
+    results,
+    firstSeenAt: nextFirstSeen,
+    now,
+  })
+  const proposalCount = await proposeGenerateForStuck({
+    monitor,
+    candidates: stuckCandidates,
+  })
+
   const report = formatReport({
     monitor,
     tickNumber,
@@ -86,6 +104,8 @@ export async function runTick(monitor: PendingMonitor): Promise<void> {
     results,
     firstSeenAt: nextFirstSeen,
     now,
+    proposalCount,
+    stuckCount: stuckCandidates.length,
   })
   await postToThread(monitor.thread_id, report).catch((err) => {
     log.error({ err, threadId: monitor.thread_id }, 'failed to post tick report')
@@ -127,6 +147,126 @@ async function runOneProject(
   }
 }
 
+interface StuckCandidate {
+  project: ProjectKey
+  item: PendingItem
+  ageMin: number
+}
+
+/**
+ * Items that are (a) present in this tick AND the previous tick (`stillItems`),
+ * and (b) at least STUCK_MINUTES old measured from firstSeenAt. Sorted oldest
+ * first so a per-tick cap picks the most concerning items first.
+ */
+function collectStuckCandidates(args: {
+  results: ProjectResult[]
+  firstSeenAt: PendingMonitor['first_seen_at']
+  now: Date
+}): StuckCandidate[] {
+  const { results, firstSeenAt, now } = args
+  const out: StuckCandidate[] = []
+  for (const r of results) {
+    if (!r.ok) continue
+    for (const item of r.stillItems) {
+      const ageMin = ageMinutes(firstSeenAt[r.project]?.[item.ref], now)
+      if (ageMin < STUCK_MINUTES) continue
+      out.push({ project: r.project, item, ageMin })
+    }
+  }
+  out.sort((a, b) => b.ageMin - a.ageMin)
+  return out
+}
+
+/**
+ * For each candidate up to MAX_AUTO_PROPOSALS_PER_TICK, park a pending_approvals
+ * row and post an approval draft in the monitor thread. Skips items that
+ * already have a still-pending proposal so operators don't get repeat prompts
+ * on every tick. Returns the number of proposals actually posted.
+ */
+async function proposeGenerateForStuck(args: {
+  monitor: PendingMonitor
+  candidates: StuckCandidate[]
+}): Promise<number> {
+  const { monitor, candidates } = args
+  if (candidates.length === 0) return 0
+
+  const client = getDiscordClient()
+  const channel = await client.channels.fetch(monitor.thread_id).catch(() => null)
+  if (!channel || !channel.isThread()) {
+    log.warn({ threadId: monitor.thread_id }, 'monitor thread missing — skipping proposals')
+    return 0
+  }
+
+  let posted = 0
+  for (const cand of candidates) {
+    if (posted >= MAX_AUTO_PROPOSALS_PER_TICK) break
+
+    const existing = await findPendingByRef(
+      monitor.thread_id,
+      cand.project,
+      cand.item.ref,
+      cand.item.kind,
+    )
+    if (existing) continue
+
+    const email = cand.item.customerEmail ?? ''
+    const expires = new Date(Date.now() + AUTO_PROPOSAL_TTL_MINUTES * 60_000)
+
+    let approvalId
+    try {
+      approvalId = await createApproval({
+        thread_id: monitor.thread_id,
+        ticket_id: `monitor-${cand.item.ref}`,
+        project: cand.project,
+        agent: 'pending-monitor',
+        customer_email: email,
+        drafted_action: {
+          action_type: 'ensure_reading_from_monitor',
+          project: cand.project,
+          ref: cand.item.ref,
+          kind: cand.item.kind,
+          customer_email: email,
+          age_min_at_propose: cand.ageMin,
+        },
+        discord_message_id: '',
+        expires_at: expires,
+      })
+    } catch (err) {
+      log.error({ err, ref: cand.item.ref }, 'createApproval failed for auto-propose')
+      continue
+    }
+
+    const body = formatProposal(cand)
+    try {
+      const msg = await channel.send(body)
+      await attachDiscordMessageId(approvalId, msg.id)
+      await msg.react('✅')
+      await msg.react('❌')
+      posted++
+    } catch (err) {
+      log.error({ err, ref: cand.item.ref }, 'posting auto-proposal failed')
+    }
+  }
+  return posted
+}
+
+function formatProposal(cand: StuckCandidate): string {
+  const { project, item, ageMin } = cand
+  return [
+    `🛟 **Recover pending order?**`,
+    '',
+    `- Project: **${project}**`,
+    `- Kind: **${item.kind}**`,
+    `- Ref: \`${item.ref}\``,
+    `- Customer: ${item.customerEmail ?? '(unknown)'}${item.customerFirstName ? ` · ${item.customerFirstName}` : ''}`,
+    `- Age: **${formatAge(ageMin)}** (stuck across ticks)`,
+    '',
+    'Proposed action: call `ensure-reading` — kicks generation if the job is missing, no-ops if a job is already running.',
+    '',
+    'React ✅ to trigger, ❌ to ignore.',
+  ].join('\n')
+}
+
 function formatReport(args: {
   monitor: PendingMonitor
   tickNumber: number
@@ -135,8 +275,10 @@ function formatReport(args: {
   results: ProjectResult[]
   firstSeenAt: PendingMonitor['first_seen_at']
   now: Date
+  proposalCount: number
+  stuckCount: number
 }): string {
-  const { monitor, tickNumber, totalTicks, isFinalTick, results, firstSeenAt, now } = args
+  const { monitor, tickNumber, totalTicks, isFinalTick, results, firstSeenAt, now, proposalCount, stuckCount } = args
   const lines: string[] = []
   lines.push(
     `📊 **Pending-orders check** · tick ${tickNumber}/${totalTicks} · ${humanizeHours(monitor.interval_hours)} interval`,
@@ -187,6 +329,20 @@ function formatReport(args: {
     if (r.resolvedRefs.length) {
       lines.push('')
       lines.push(`✅ Resolved since last tick: ${r.resolvedRefs.length}`)
+    }
+  }
+
+  if (proposalCount > 0 || stuckCount > MAX_AUTO_PROPOSALS_PER_TICK) {
+    lines.push('')
+    if (proposalCount > 0) {
+      lines.push(
+        `🛟 Auto-proposals posted: **${proposalCount}** (react ✅/❌ on each above).`,
+      )
+    }
+    if (stuckCount > proposalCount) {
+      lines.push(
+        `_…and ${stuckCount - proposalCount} more stuck ${stuckCount - proposalCount === 1 ? 'item' : 'items'} not auto-proposed (cap: ${MAX_AUTO_PROPOSALS_PER_TICK}/tick)._`,
+      )
     }
   }
 
