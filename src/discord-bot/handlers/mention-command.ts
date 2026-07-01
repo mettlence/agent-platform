@@ -35,6 +35,18 @@ const CONTEXT_HISTORY_LIMIT = 20
 export async function handleMentionCommand(message: Message): Promise<void> {
   const ownTokens = extractAll(message.content)
 
+  // Intro short-circuit runs against the user's OWN message only, and BEFORE
+  // history/reply expansion. Otherwise a channel with stale receipt/email
+  // context bleeds into "who are you?" and the intro is skipped in favour of
+  // an unrelated ticket flow.
+  if (!hasUsable(ownTokens)) {
+    const stripped = stripDiscordMentions(message.content).trim()
+    if (isIntroRequest(stripped)) {
+      await sendIntroReply(message)
+      return
+    }
+  }
+
   let tokens: ExtractedTokens = ownTokens
   let contextSource: 'self' | 'reply' | 'history' = 'self'
 
@@ -68,11 +80,6 @@ export async function handleMentionCommand(message: Message): Promise<void> {
   }
 
   if (!hasUsable(tokens)) {
-    const stripped = stripDiscordMentions(message.content).trim()
-    if (isIntroRequest(stripped)) {
-      await sendIntroReply(message)
-      return
-    }
     await message.reply(
       [
         "I can't see a receipt or email to work from.",
