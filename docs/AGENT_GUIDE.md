@@ -265,10 +265,13 @@ diff report each tick.
   failures are surfaced in the report but do not abort the tick for the
   other project.
 - **Read-only ticks; per-item mutations still gated.** The tick itself
-  never writes to a project DB. When it finds items stuck across ticks
-  (age > 30min), it POSTS approval prompts — one per stuck item, capped
-  at 3 per tick, deduped against still-pending prompts for the same
-  ref. The mutation only happens after ✅ (`ensure-reading` via the
+  never writes to a project DB. When it finds an item that's ≥ 30min
+  old (based on order createdAt), it POSTS an approval prompt — one
+  per candidate, capped at 3 per tick, deduped against still-pending
+  prompts for the same ref. Age is the sole gate; "seen in ≥ 2 ticks"
+  is NOT required because ensure-reading is idempotent and long
+  intervals (4h+) would otherwise silence the operator for way too
+  long. The mutation only happens after ✅ (`ensure-reading` via the
   connector). The "no writes without ✅" invariant still holds — each
   ref gets its own approval.
 

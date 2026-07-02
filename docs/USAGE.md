@@ -216,9 +216,11 @@ localized time in Discord).
 
 ### Auto-proposed recovery when items get stuck
 
-When an item stays pending across ticks AND is more than 30 minutes old,
-the bot doesn't just report it — it posts an approval prompt below the
-tick report offering to call `ensure-reading` on that specific ref:
+When an item's order age is at least 30 minutes (paid ≥ 30min ago and
+still no reading), the bot doesn't just report it — it posts an approval
+prompt below the tick report offering to call `ensure-reading` on that
+specific ref. This fires whether the item was newly observed this tick
+or has been in the snapshot for a while — age is the only gate.
 
 ```
 🛟 Recover pending order?

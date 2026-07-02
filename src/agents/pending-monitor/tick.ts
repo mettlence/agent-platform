@@ -154,9 +154,16 @@ interface StuckCandidate {
 }
 
 /**
- * Items that are (a) present in this tick AND the previous tick (`stillItems`),
- * and (b) at least STUCK_MINUTES old measured from firstSeenAt. Sorted oldest
- * first so a per-tick cap picks the most concerning items first.
+ * Items whose order age (`now - createdAt`, tracked in firstSeenAt) is at
+ * least STUCK_MINUTES. Sorted oldest first so the per-tick cap picks the
+ * most concerning items first.
+ *
+ * Age is the sole gate — the "seen in ≥ 2 ticks" filter was removed. When
+ * the monitor interval is long (e.g. 8h), an item whose createdAt is
+ * already older than STUCK_MINUTES at first sighting shouldn't be delayed
+ * another whole interval to "confirm" it's stuck. ensureReading is
+ * idempotent (backend returns the running job status when a job is
+ * already in flight), so a false-positive proposal is cheap.
  */
 function collectStuckCandidates(args: {
   results: ProjectResult[]
@@ -167,7 +174,7 @@ function collectStuckCandidates(args: {
   const out: StuckCandidate[] = []
   for (const r of results) {
     if (!r.ok) continue
-    for (const item of r.stillItems) {
+    for (const item of r.items) {
       const ageMin = ageMinutes(firstSeenAt[r.project]?.[item.ref], now)
       if (ageMin < STUCK_MINUTES) continue
       out.push({ project: r.project, item, ageMin })
@@ -262,7 +269,7 @@ function formatProposal(cand: StuckCandidate): string {
     `- Kind: **${item.kind}**`,
     `- Ref: \`${item.ref}\``,
     `- Customer: ${item.customerEmail ?? '(unknown)'}${item.customerFirstName ? ` · ${item.customerFirstName}` : ''}`,
-    `- Age: **${formatAge(ageMin)}** (stuck across ticks)`,
+    `- Age: **${formatAge(ageMin)}** (paid, no reading yet)`,
     '',
     'Proposed action: call `ensure-reading` — kicks generation if the job is missing, no-ops if a job is already running.',
     '',
@@ -304,14 +311,14 @@ function formatReport(args: {
         : `was ${prevCount}, +${r.newItems.length} new, -${r.resolvedRefs.length} resolved`
     lines.push(`Total pending: **${total}** · ${delta}`)
 
-    const stuck = r.stillItems
+    const stuck = r.items
       .map((i) => ({ item: i, ageMin: ageMinutes(firstSeenAt[r.project]?.[i.ref], now) }))
       .filter((x) => x.ageMin >= STUCK_MINUTES)
       .sort((a, b) => b.ageMin - a.ageMin)
       .slice(0, 8)
     if (stuck.length) {
       lines.push('')
-      lines.push(`⚠️ Stuck (>${STUCK_MINUTES}min, still pending across ticks):`)
+      lines.push(`⚠️ Stuck (>${STUCK_MINUTES}min old, still pending):`)
       for (const { item, ageMin } of stuck) {
         lines.push(`- ${item.kind} \`${item.ref}\` · ${item.customerEmail ?? '?'} · ${formatAge(ageMin)}`)
       }
