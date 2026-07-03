@@ -11,6 +11,7 @@ import {
   handleMonitorRequest,
   handleStopMonitor,
 } from './handlers/monitor-command.js'
+import { handleFixPendingRequest } from './handlers/fix-pending-command.js'
 
 const log = pino({ name: 'router' })
 const PREFIX = '!'
@@ -76,6 +77,10 @@ export async function routeMessage(message: Message): Promise<void> {
     case 'stopmonitor':
       await handleStopMonitor(message)
       return
+    case 'fix-pending':
+    case 'fixpending':
+      await handleFixPendingRequest(message, args.join(' '))
+      return
     case 'about':
     case 'introduce':
       await sendIntroReply(message)
@@ -93,6 +98,7 @@ export async function routeMessage(message: Message): Promise<void> {
           '`!cs <ticket-id> email=... [receipt=...] [project=asksabrina|astroloversketch] [complaint="..."]` — explicit form. Project auto-detected from receipt.',
           '`!monitor <projects> every Nh for Mh` — schedule pending-order checks. Also `@bot monitor pending both every 4h for 24h`.',
           '`!stop-monitor` — stop the monitor in the current thread.',
+          '`!fix-pending <projects>` — one-shot: scan pending orders and auto-regenerate anything stuck >30min. Also `@bot fix pending orders astroloversketch`.',
           '`!about` / `!introduce` / `@bot introduce yourself` — what I am, how to use me (attaches full guide).',
           '`!help` — show this',
         ].join('\n'),

@@ -14,6 +14,10 @@ import {
 } from '@/discord-bot/extractors.js'
 import { isIntroRequest, sendIntroReply } from './introduce.js'
 import { handleMonitorRequest, looksLikeMonitorRequest } from './monitor-command.js'
+import {
+  handleFixPendingRequest,
+  looksLikeFixPendingRequest,
+} from './fix-pending-command.js'
 
 /**
  * Natural-language entrypoint. Triggered when a user @-mentions the bot —
@@ -41,6 +45,13 @@ export async function handleMentionCommand(message: Message): Promise<void> {
   // receipt/email context bleeds into "who are you?" or "monitor pending"
   // and the intent is skipped in favour of an unrelated ticket flow.
   const stripped = stripDiscordMentions(message.content).trim()
+  // Fix intent takes precedence over monitor intent — "fix pending orders X"
+  // matches both ("pending orders" is a monitor pattern too), but the user
+  // asked for a one-shot heal, not a scheduled monitor.
+  if (looksLikeFixPendingRequest(stripped)) {
+    await handleFixPendingRequest(message, stripped)
+    return
+  }
   if (looksLikeMonitorRequest(stripped)) {
     await handleMonitorRequest(message, stripped)
     return
