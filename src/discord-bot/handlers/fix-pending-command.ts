@@ -56,12 +56,116 @@ export async function handleFixPendingRequest(
   )
 
   const perProject = await Promise.all(projects.map(scanAndFixOneProject))
-  const report = formatFixReport(perProject)
-  await sendToThread(target, report)
+  const pollables = collectPollables(perProject)
+  const initialReport = formatFixReport(perProject, { hasPending: pollables.length > 0 })
+
+  // If the report is single-message, keep a handle so we can edit it as
+  // jobs finish. If it chunked, editing only the last chunk would be
+  // misleading — skip polling and add a footer telling the operator to
+  // recheck manually.
+  const willEdit = initialReport.length <= 1900 && pollables.length > 0
+  const reportMessage = await sendToThread(target, initialReport)
 
   log.info(
-    { projects, results: perProject.map((r) => ({ project: r.project, ok: r.ok, total: r.totalPending, stuck: r.stuck.length })) },
+    {
+      projects,
+      willEdit,
+      pollableCount: pollables.length,
+      results: perProject.map((r) => ({
+        project: r.project,
+        ok: r.ok,
+        total: r.totalPending,
+        stuck: r.stuck.length,
+      })),
+    },
     'fix-pending scan complete',
+  )
+
+  if (willEdit) {
+    // Fire-and-forget: the handler returns immediately; the message keeps
+    // getting edited in-place as each waitForJob resolves. Errors are
+    // logged but don't crash the bot — the initial report is already up.
+    void pollAndEditReport({ reportMessage, perProject, pollables }).catch((err) => {
+      log.error({ err, messageId: reportMessage.id }, 'pollAndEditReport threw')
+    })
+  }
+}
+
+interface Pollable {
+  project: ProjectKey
+  jobId: string
+  regen: RegenResult
+}
+
+function collectPollables(perProject: ProjectFixResult[]): Pollable[] {
+  const out: Pollable[] = []
+  for (const r of perProject) {
+    if (!r.ok) continue
+    for (const s of r.stuck) {
+      const g = s.regen
+      if (!g || !g.ok || !g.jobId) continue
+      if (g.status === 'pending' || g.status === 'running') {
+        out.push({ project: r.project, jobId: g.jobId, regen: g })
+      }
+    }
+  }
+  return out
+}
+
+const POLL_TIMEOUT_MS = 5 * 60 * 1000 // 5min per job — same cap as connector default
+const POLL_INTERVAL_MS = 5000
+
+/**
+ * Wait for every kicked job to reach a terminal state, mutating the
+ * associated RegenResult and re-rendering the Discord message after each
+ * resolution. One Discord edit per completed job; jobs run in parallel so
+ * ordering is by finish time.
+ */
+async function pollAndEditReport(args: {
+  reportMessage: Message
+  perProject: ProjectFixResult[]
+  pollables: Pollable[]
+}): Promise<void> {
+  const { reportMessage, perProject, pollables } = args
+  let pending = pollables.length
+
+  const editNow = async (): Promise<void> => {
+    const rendered = formatFixReport(perProject, { hasPending: pending > 0 })
+    if (rendered.length > 1900) return
+    try {
+      await reportMessage.edit(rendered)
+    } catch (err) {
+      log.warn({ err, messageId: reportMessage.id }, 'edit report failed')
+    }
+  }
+
+  await Promise.all(
+    pollables.map(async (p) => {
+      const connector = getConnector(p.project)
+      try {
+        const finalJob = await connector.waitForJob(p.jobId, {
+          timeoutMs: POLL_TIMEOUT_MS,
+          intervalMs: POLL_INTERVAL_MS,
+        })
+        if (!finalJob) {
+          p.regen.finalStatus = 'timeout'
+        } else if (finalJob.status === 'done') {
+          p.regen.finalStatus = 'done'
+        } else if (finalJob.status === 'failed') {
+          p.regen.finalStatus = 'failed'
+          p.regen.finalError = finalJob.lastError ?? 'job failed'
+        } else {
+          // Still pending/running after timeoutMs — treat as timeout.
+          p.regen.finalStatus = 'timeout'
+        }
+      } catch (err) {
+        log.error({ err, jobId: p.jobId, project: p.project }, 'waitForJob threw')
+        p.regen.finalStatus = 'timeout'
+      } finally {
+        pending -= 1
+        await editNow()
+      }
+    }),
   )
 }
 
@@ -121,7 +225,10 @@ async function scanAndFixOneProject(project: ProjectKey): Promise<ProjectFixResu
   }
 }
 
-function formatFixReport(results: ProjectFixResult[]): string {
+function formatFixReport(
+  results: ProjectFixResult[],
+  opts: { hasPending: boolean } = { hasPending: false },
+): string {
   const lines: string[] = []
   lines.push(`🛟 **Fix pending orders** · one-shot scan`)
 
@@ -132,7 +239,9 @@ function formatFixReport(results: ProjectFixResult[]): string {
       lines.push(`❌ Fetch failed: \`${r.error}\``)
       continue
     }
-    const failed = r.stuck.filter((x) => x.regen && !x.regen.ok).length
+    const failed = r.stuck.filter(
+      (x) => x.regen && (!x.regen.ok || x.regen.finalStatus === 'failed'),
+    ).length
     lines.push(
       `Total pending: **${r.totalPending}** · stuck (>${STUCK_MINUTES}min): **${r.stuck.length}**${failed ? ` · ❌ ${failed} failed` : ''}`,
     )
@@ -151,6 +260,13 @@ function formatFixReport(results: ProjectFixResult[]): string {
       lines.push(`- …and ${r.stuck.length - shown.length} more (all triggered)`)
     }
   }
+
+  lines.push('')
+  lines.push(
+    opts.hasPending
+      ? '_⏳ Waiting for jobs to finish — this message will update as each completes._'
+      : '_✅ All done._',
+  )
   return lines.join('\n')
 }
 

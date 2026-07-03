@@ -33,6 +33,13 @@ export interface RegenResult {
   status?: 'already_ready' | 'pending' | 'running'
   jobId?: string
   error?: string
+  /**
+   * Set by a follow-up poller (see `pollAndEditReport`) once the job the
+   * kick produced has resolved. Renderer prefers this over `status` so an
+   * item that started as "queued" can end up as "✅ ready".
+   */
+  finalStatus?: 'done' | 'failed' | 'timeout'
+  finalError?: string
 }
 
 /**
@@ -80,11 +87,16 @@ export async function autoRegenerateStuck(
 
 export function formatRegenStatus(r: RegenResult): string {
   if (!r.ok) return `❌ ${r.error ?? 'error'}`
+  if (r.finalStatus === 'done') return '✅ ready'
+  if (r.finalStatus === 'failed') return `❌ job failed: ${r.finalError ?? 'unknown'}`
+  if (r.finalStatus === 'timeout') {
+    return `⏱️ still running (timeout${r.jobId ? `, job \`${r.jobId}\`` : ''})`
+  }
   switch (r.status) {
     case 'already_ready':
       return '✅ already ready'
     case 'running':
-      return `⏳ already running${r.jobId ? ` (job \`${r.jobId}\`)` : ''}`
+      return `⏳ running${r.jobId ? ` (job \`${r.jobId}\`)` : ''}`
     case 'pending':
       return `🔄 queued${r.jobId ? ` (job \`${r.jobId}\`)` : ''}`
     default:
