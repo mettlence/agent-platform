@@ -1,5 +1,40 @@
 import { describe, expect, it } from 'vitest'
-import { parseMonitorRequest, looksLikeMonitorRequest } from './monitor-parser.js'
+import {
+  parseMonitorRequest,
+  looksLikeMonitorRequest,
+  looksLikeStopMonitorRequest,
+} from './monitor-parser.js'
+
+describe('looksLikeStopMonitorRequest', () => {
+  it.each([
+    'stop monitor',
+    'stop the monitor',
+    'cancel monitor',
+    'stop monitoring pending orders',
+    'hentikan monitor',
+    'matikan cronjob',
+    'berhenti pantau',
+  ])('detects stop intent in %j', (text) => {
+    expect(looksLikeStopMonitorRequest(text)).toBe(true)
+  })
+
+  it.each([
+    'monitor pending both every 4h for 24h',
+    'stop',
+    'cancel that order',
+    'jane@example.com',
+  ])('does not treat %j as a stop request', (text) => {
+    expect(looksLikeStopMonitorRequest(text)).toBe(false)
+  })
+
+  // The stop check runs first in mention-command precisely because these
+  // phrases also match the start intent — if that order ever flips, a stop
+  // request would schedule a new monitor instead of ending the running one.
+  it('overlaps with the start intent, so ordering matters', () => {
+    expect(looksLikeMonitorRequest('stop monitor')).toBe(true)
+    expect(looksLikeStopMonitorRequest('stop monitor')).toBe(true)
+  })
+})
 
 describe('looksLikeMonitorRequest', () => {
   it('accepts English monitor phrasings', () => {

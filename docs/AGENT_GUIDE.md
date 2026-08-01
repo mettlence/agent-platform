@@ -13,7 +13,7 @@ happens without approval.
 ```
 Discord message
   → router.ts
-    → handler (mention | !cs | thread-continue | reaction)
+    → handler (mention | thread-continue | reaction)
       → agents/cs-recovery/index.ts        (LLM loop: skill.md + tools.ts)
         → shared/connectors/*              (ClickBank, project APIs, Discord)
         → shared/gates/*                   (payment-verify)
@@ -36,7 +36,6 @@ src/
   discord-bot/
     router.ts                 message dispatch (guild + channel allowlist)
     handlers/
-      cs-command.ts           !cs command
       mention-command.ts      @bot fresh mention
       thread-continue.ts      @bot inside an existing recovery thread
       reaction.ts             ✅ / ❌ on draft messages
@@ -109,7 +108,7 @@ Say we're adding `newbrand`:
    choice happens.
 6. **.env** — add the new keys locally and to the EC2 `.env`. Don't commit
    them.
-7. **Test** — send a `!cs` for a known-good ticket in a staging channel
+7. **Test** — mention the bot with a known-good receipt in a staging channel
    before opening the allowlist for the real CS channel.
 
 Do NOT add cross-brand logic. Each brand branch is independent by design —

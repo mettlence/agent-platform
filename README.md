@@ -8,12 +8,12 @@ Multi-project agent service. First agent: `cs-recovery` — recovers customer or
 
 ## Status
 
-MVP scaffold. Ready for local dev once `.env` is filled. EC2 deploy via Docker. Discord bot connects on startup; first command to try: `!help`.
+MVP scaffold. Ready for local dev once `.env` is filled. EC2 deploy via Docker. Discord bot connects on startup; first thing to try: `@bot introduce yourself`.
 
 ## Architecture
 
 ```
-Discord !cs <ticket-id> email=...
+Discord @bot <receipt|email> (mention-only)
    ↓
 discord-bot/router  →  agents/cs-recovery
                          ↓
@@ -166,18 +166,19 @@ db.pending_monitors.createIndex({ ttl_at: 1 }, { expireAfterSeconds: 0 })
 - CS-recovery agent loop (investigate → draft → propose)
 - Executor with re-verify (gate re-runs at execution time)
 - Pending-monitor agent — scheduled read-only checks for paid-but-not-generated orders, per-tick diff report to Discord
-- Discord bot: `!cs`, `!monitor`, `!stop-monitor`, `!about`, `!introduce`, `!help` + reaction-based approval (✅ / ❌)
+- Discord bot: mention-only triggers (recovery, `monitor`, `stop monitor`, `fix pending`, `introduce yourself`) + reaction-based approval (✅ / ❌)
+- DM approval route for tickets relayed by an allowlisted partner bot — draft goes to one named approver privately, channel gets a two-line summary
 - HTTP API: `POST /cs-recovery/trigger`, `GET /health`
 - Tests for the payment gate (vitest)
 
 ## What's not wired (TODO)
 
-- `astroloversketch` connector (stub only — clone asksabrina shape once that API exists)
-- `!cs-job <jobId>` command to check long-running regeneration jobs
+- `astroloversketch` env vars (`ASTROLOVERSKETCH_API_BASE` / `_AGENT_KEY`) — the connector is fully implemented, but the connector throws at call time while these are blank, so astrolover tickets fail on first use
+- `@bot job <jobId>` follow-up to check long-running regeneration jobs
 - Lessons-extraction (auto-add a lesson when a thread surfaces a new edge case)
 - Metrics / dashboards
 - Slack mirror (if needed)
-- Per-user role gating on Discord (currently any non-bot can ✅)
+- Per-user role gating for in-thread drafts (any non-bot can still ✅; only the DM relay route pins a single approver)
 
 ## Server-side dependency
 

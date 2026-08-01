@@ -44,7 +44,7 @@ export interface RegenResult {
 
 /**
  * Fire `ensureReading` for every stuck candidate in parallel. Called from
- * both the monitor tick and the one-shot `!fix-pending` handler.
+ * both the monitor tick and the one-shot `@bot fix pending` handler.
  */
 export async function autoRegenerateStuck(
   candidates: StuckCandidate[],

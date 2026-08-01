@@ -23,7 +23,7 @@ const PENDING_INTENT = /\bpending\b/i
 /**
  * One-shot "scan + auto-regenerate stuck" — no monitor row, no schedule, no
  * approval prompt. Handler for `@bot fix pending orders <project>` and
- * `!fix-pending <project>`. Idempotent because ensureReading is idempotent
+ * `@bot fix pending orders <project>`. Idempotent because ensureReading is idempotent
  * on the backend; safe to run any time.
  */
 export function looksLikeFixPendingRequest(text: string): boolean {

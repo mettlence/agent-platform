@@ -1,7 +1,7 @@
 import type { MessageReaction, PartialMessageReaction, User, PartialUser } from 'discord.js'
 import { ObjectId } from 'mongodb'
 import pino from 'pino'
-import { findByMessageId, resolveApproval } from '@/shared/state/approvals.js'
+import { findByMessageId, resolveApproval, type PendingApproval } from '@/shared/state/approvals.js'
 import { executeApprovedAction, type DraftAction } from '@/agents/cs-recovery/executor.js'
 import { postToThread } from '@/shared/connectors/discord.js'
 import { createMonitor } from '@/shared/state/monitors.js'
@@ -42,9 +42,24 @@ export async function handleReactionAdd(
 
   const userId = user.id
 
+  // Approvals routed to a specific person (the DM relay route) may only be
+  // resolved by that person. Rows without the field keep the original
+  // behaviour where anyone in the channel can react.
+  if (approval.approver_user_id && userId !== approval.approver_user_id) {
+    log.warn(
+      { messageId, userId, expected: approval.approver_user_id },
+      'reaction ignored: not the designated approver',
+    )
+    return
+  }
+
   if (emoji === REJECT) {
     await resolveApproval(messageId, 'rejected', userId)
-    await postToThread(approval.thread_id, `❌ Action skipped by <@${userId}>.`)
+    await announce(
+      approval,
+      `❌ Action skipped by <@${userId}>.`,
+      `❌ <@${userId}> rejected the change for **${approval.ticket_id}** — nothing was modified.`,
+    )
     return
   }
 
@@ -52,6 +67,8 @@ export async function handleReactionAdd(
   const resolved = await resolveApproval(messageId, 'approved', userId)
   if (!resolved) return                        // race — already resolved
 
+  // Thread only: the origin channel gets one combined message after the work
+  // finishes, rather than an "executing" line followed by a result line.
   await postToThread(approval.thread_id, `✅ Approved by <@${userId}>. Executing...`)
 
   const draftedAction = approval.drafted_action as { action_type?: string } & Record<string, unknown>
@@ -125,27 +142,60 @@ export async function handleReactionAdd(
         if (r.reading_link) lines.push(`- Reading: ${r.reading_link}`)
         if (r.download_link) lines.push(`- Download: ${r.download_link}`)
         if (r.job_pending && r.job_id) {
-          lines.push(`- (reading generation still running — job \`${r.job_id}\`. Re-run \`!cs <ticket>\` in a few minutes to fetch the link.)`)
+          lines.push(`- (reading generation still running — job \`${r.job_id}\`. Re-mention the bot with the same receipt in a few minutes to fetch the link.)`)
         } else if (!r.reading_link && !r.download_link) {
           lines.push('- (no link resolved — check asksabrina admin for this order ref)')
         }
       }
       lines.push('', 'Send to customer or paste into LiveAgent reply.')
-      await postToThread(approval.thread_id, lines.join('\n'))
+      // Channel summary drops the action id and the internal instruction —
+      // the requester only needs "approved, done, here's the link".
+      const summary = [`✅ <@${userId}> approved — **${approval.ticket_id}** is done.`]
+      if (r.question_page_url) summary.push(`- Question page: ${r.question_page_url}`)
+      if (r.reading_link) summary.push(`- Reading: ${r.reading_link}`)
+      if (r.download_link) summary.push(`- Download: ${r.download_link}`)
+      if (r.job_pending) summary.push('- Reading is still generating — the link will work shortly.')
+      await announce(approval, lines.join('\n'), summary.join('\n'))
     } else {
       const lines = [
         `❌ Execution failed.`,
         `Error: \`${result.error}\``,
         result.gate_failures?.length ? `Gate failures:\n${result.gate_failures.map((f) => `- ${f}`).join('\n')}` : '',
       ].filter(Boolean)
-      await postToThread(approval.thread_id, lines.join('\n'))
+      await announce(
+        approval,
+        lines.join('\n'),
+        `❌ <@${userId}> approved **${approval.ticket_id}** but execution failed: \`${result.error}\`. Nothing was changed.`,
+      )
     }
   } catch (err) {
     log.error({ err, messageId }, 'execution threw')
-    await postToThread(
-      approval.thread_id,
-      `❌ Execution threw: \`${err instanceof Error ? err.message : String(err)}\``,
+    const msg = err instanceof Error ? err.message : String(err)
+    await announce(
+      approval,
+      `❌ Execution threw: \`${msg}\``,
+      `❌ **${approval.ticket_id}** failed during execution: \`${msg}\``,
     )
+  }
+}
+
+/**
+ * Post the detailed outcome to the agent thread, and — when the request was
+ * relayed in from somewhere else — a short summary back to that channel.
+ *
+ * On the DM route the two land in different places: the thread keeps the full
+ * audit trail, while the requesting channel gets the one line it's waiting on.
+ * Same-target approvals post once, since origin equals thread.
+ */
+async function announce(
+  approval: PendingApproval,
+  detail: string,
+  channelSummary?: string,
+): Promise<void> {
+  await postToThread(approval.thread_id, detail)
+  const origin = approval.origin_channel_id
+  if (origin && origin !== approval.thread_id && channelSummary) {
+    await postToThread(origin, channelSummary)
   }
 }
 

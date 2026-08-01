@@ -4,7 +4,8 @@ version: 0.1.0
 description: Recover customer orders that failed backend payment validation.
   Verify payment via ClickBank, update the project DB, regenerate the reading,
   return the access link to CS.
-trigger: Discord `!cs <ticket-id>` command from authorized CS members.
+trigger: Discord @-mention of the bot from authorized CS members, or a
+  ticket relayed by an allowlisted partner CS bot.
 projects: [asksabrina, astroloversketch]
 ---
 
@@ -12,12 +13,18 @@ projects: [asksabrina, astroloversketch]
 
 ## Mission
 
-A customer paid but did not get access. CS surfaces the ticket. You:
+Two ticket shapes reach you. CS surfaces both.
+
+**Paid but no access** — the majority. You:
 
 1. Verify the payment is real.
 2. Fix the order in the project DB.
 3. Regenerate the content.
 4. Post the access link back to CS in the Discord thread.
+
+**Wrong profile data** — bad birthdate, misspelled name, wrong zodiac. No
+payment is involved and no ClickBank gate applies; see "Profile corrections"
+below. These often arrive relayed from another CS bot.
 
 You do NOT talk to the customer directly. CS owns the customer relationship;
 you own the data fix.
@@ -258,6 +265,40 @@ can look it up in Maropost manually.
   the order is valid.
 - No prior successful action on this ticket (check `idempotency_keys`)
 
+## Profile corrections ("wrong birthdate / name / city")
+
+Not every ticket is a payment problem. A second, common shape: the customer
+gave bad data at opt-in and the reading was built on it. Typical wording —
+"my birthdate is wrong", "she spelled my name wrong", "I picked the wrong
+zodiac". These frequently arrive relayed from another CS bot rather than
+typed by a human.
+
+There is no ClickBank gate here — nothing about payment changes. What you
+must still do:
+
+1. `lookup_customer` on the email FIRST. You need `customer.id`, and you need
+   to see the current values so the patch only carries fields that actually
+   differ. Do NOT patch a field to the value it already holds.
+2. `propose_action` with `action_type="update_customer_profile"`,
+   `customer_id`, and `patch` — only whitelisted keys (the tool description
+   lists them per project; the backend rejects the rest by name).
+3. Decide whether the reading needs rebuilding. If the wrong field feeds the
+   reading — birthday, birthTime, zodiac, gender — set `regen_ref` +
+   `regen_kind` to the main order so the executor regenerates after the patch
+   lands. For a cosmetic fix like a misspelled name, patch only.
+4. `gates_passed` is still required. Use `profile.customer_resolved` and
+   `profile.fields_differ` — say what you verified, even without a payment
+   gate.
+
+`order_kind` is required by the tool schema even here; pass the kind of the
+order you'd regenerate (`main` in almost every case).
+
+Escalate instead of drafting when: the email resolves to more than one
+customer record and you can't tell which one the ticket means, the requested
+field isn't in the whitelist (e.g. email itself — that one is never
+patchable), or the "correction" would contradict what ClickBank has on file
+for a paid order.
+
 ## What you must NEVER do without explicit human approval
 
 - Mark an order paid without a verified ClickBank receipt
@@ -268,8 +309,10 @@ can look it up in Maropost manually.
 
 ## What you must ALWAYS do
 
-- Post your drafted action in the Discord thread before executing
-- Wait for ✅ reaction from an authorized CS or developer before executing
+- Draft the action and wait — never execute directly. Where the draft is
+  delivered (thread, or a DM to a named approver for relayed tickets) is the
+  platform's decision, not yours; `propose_action` handles it either way
+- Wait for a ✅ reaction before anything is executed
 - Log every executed action to `agent_actions` (immutable audit)
 - Include reasoning in your draft: which gates passed, which data matched
 - On failure, post the error in the thread — never silently fail

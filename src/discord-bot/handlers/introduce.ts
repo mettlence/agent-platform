@@ -37,12 +37,12 @@ const INTRO_TEXT = [
   '`@me jane@example.com` — email-only; I pick the brand if only one matches',
   '`@me ABC12345 jane@example.com` — both',
   '`@me fix this` (as a reply) — I read the message you replied to',
-  '`!cs <ticket> email=... [receipt=...] [project=...]` — explicit form',
+  '`@me <follow-up>` (inside one of my threads) — continues that ticket',
   '',
   '**Monitoring pending orders**',
-  '`@me monitor pending both every 4h for 24h` — natural mention',
-  '`!monitor both every 4h for 24h` — explicit form',
-  '`!stop-monitor` (inside the monitor thread) — stop early',
+  '`@me monitor pending both every 4h for 24h` — schedule checks',
+  '`@me fix pending orders asksabrina` — one-shot heal of stuck orders',
+  '`@me stop monitor` (in the monitor thread/channel) — stop early',
   '',
   '**I will never**',
   '- Message the customer directly',
@@ -50,7 +50,8 @@ const INTRO_TEXT = [
   '- Execute anything without a ✅',
   '- Act on tickets older than 60 days',
   '',
-  'Full guide attached as `usage.md` — the file below. `!help` for the short command reference.',
+  'Mentioning me is the only way to reach me — there are no `!` commands.',
+  'Full guide attached as `usage.md` — the file below.',
 ].join('\n')
 
 const USAGE_PATH = join(process.cwd(), 'docs/USAGE.md')

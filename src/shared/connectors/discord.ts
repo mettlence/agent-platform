@@ -19,7 +19,15 @@ export function getDiscordClient(): Client {
       GatewayIntentBits.GuildMessages,
       GatewayIntentBits.MessageContent,
       GatewayIntentBits.GuildMessageReactions,
+      // DM approval route. DirectMessageReactions is the one that actually
+      // matters — without it the ✅ on a DM'd draft never reaches the gateway
+      // and the approval silently hangs until it expires.
+      GatewayIntentBits.DirectMessages,
+      GatewayIntentBits.DirectMessageReactions,
     ],
+    // Partials.Channel is required for DM events at all: the DM channel isn't
+    // in cache until the user interacts, so without it discord.js drops the
+    // event instead of emitting a partial.
     partials: [Partials.Message, Partials.Reaction, Partials.Channel],
   })
   return client
@@ -86,6 +94,26 @@ export async function postToThread(
   const channel = await c.channels.fetch(targetId)
   if (!channel || !('send' in channel)) return null
   return sendToThread(channel as PostTarget, content)
+}
+
+/**
+ * DM a user, chunked like any other send. Returns the LAST message so the
+ * caller can attach an approval id and reactions to it.
+ *
+ * Returns null instead of throwing when Discord refuses the DM — the common
+ * case is error 50007 ("Cannot send messages to this user"), which happens
+ * when the recipient has "Allow direct messages from server members" off, or
+ * shares no guild with the bot. Callers MUST handle null by falling back to a
+ * visible channel post; a swallowed DM failure would strand the approval.
+ */
+export async function sendDM(userId: string, content: string): Promise<Message | null> {
+  try {
+    const user = await getDiscordClient().users.fetch(userId)
+    const dm = await user.createDM()
+    return await sendToThread(dm, content)
+  } catch {
+    return null
+  }
 }
 
 export async function createThreadFromMessage(

@@ -209,7 +209,7 @@ async function runAgentLoop(opts: {
       // The model concluded its investigation without calling propose_action
       // or escalate_to_human. If it explained why in trailing prose, surface
       // that to CS as an informational outcome — common case is "nothing to
-      // fix" (e.g. re-running !cs after a successful recovery). Only treat
+      // fix" (e.g. re-mentioning the bot after a successful recovery). Only treat
       // it as an error when the model went silent entirely.
       const trailingText = response.content
         .filter((b): b is { type: 'text'; text: string } => b.type === 'text')

@@ -5,6 +5,7 @@ import { attachDiscordMessageId, createApproval } from '@/shared/state/approvals
 import { findActiveByThread, stopMonitor } from '@/shared/state/monitors.js'
 import {
   looksLikeMonitorRequest,
+  looksLikeStopMonitorRequest,
   parseMonitorRequest,
   type MonitorRequest,
 } from './monitor-parser.js'
@@ -16,8 +17,7 @@ const APPROVAL_TTL_MINUTES = 30
 
 /**
  * Handle a monitor request — either from a natural mention detected in
- * mention-command, or from an explicit `!monitor ...` invocation. Both
- * paths converge here: parse → propose in thread → user ✅ to schedule.
+ * mention-command. Parse → propose in thread → user ✅ to schedule.
  *
  * The scheduling itself happens in reaction.ts on ✅, so this handler's
  * only job is to draft + park a pending_approvals row. That reuses the
@@ -36,7 +36,7 @@ export async function handleMonitorRequest(
         'Examples:',
         '`@bot monitor pending asksabrina every 4h for 24h`',
         '`@bot cronjob check pending both per 2h selama 12 jam`',
-        '`!monitor both every 4h for 24h`',
+        '`@bot monitor pending both every 4h for 24h`',
       ].join('\n'),
     )
     return
@@ -55,7 +55,7 @@ export async function handleMonitorRequest(
     const existing = await findActiveByThread(message.channelId)
     if (existing) {
       await message.reply(
-        `⚠️ There's already an active monitor in this channel (expires <t:${Math.floor(existing.expires_at.getTime() / 1000)}:R>). Stop it first with \`!stop-monitor\`.`,
+        `⚠️ There's already an active monitor in this channel (expires <t:${Math.floor(existing.expires_at.getTime() / 1000)}:R>). Stop it first with \`@bot stop monitor\`.`,
       )
       return
     }
@@ -74,7 +74,7 @@ export async function handleMonitorRequest(
     if (existing) {
       await sendToThread(
         target,
-        `⚠️ There's already an active monitor here (expires <t:${Math.floor(existing.expires_at.getTime() / 1000)}:R>). Stop it first with \`!stop-monitor\`.`,
+        `⚠️ There's already an active monitor here (expires <t:${Math.floor(existing.expires_at.getTime() / 1000)}:R>). Stop it first with \`@bot stop monitor\`.`,
       )
       return
     }
@@ -123,7 +123,7 @@ export async function handleStopMonitor(message: Message): Promise<void> {
   )
 }
 
-export { looksLikeMonitorRequest }
+export { looksLikeMonitorRequest, looksLikeStopMonitorRequest }
 
 function buildDraft(req: MonitorRequest, totalTicks: number, inline: boolean): string {
   const { projects, interval_hours, duration_hours } = req
@@ -141,7 +141,7 @@ function buildDraft(req: MonitorRequest, totalTicks: number, inline: boolean): s
     '- ⚠️ items stuck across ticks (age > 30min)',
     '- ✅ items resolved since last tick',
     '',
-    `React ✅ to start, ❌ to cancel. Stop early with \`!stop-monitor\` in ${where}.`,
+    `React ✅ to start, ❌ to cancel. Stop early with \`@bot stop monitor\` in ${where}.`,
   ].join('\n')
 }
 

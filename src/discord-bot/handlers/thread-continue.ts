@@ -8,7 +8,7 @@ import { extractAll, extractFreeText, stripDiscordMentions } from '@/discord-bot
 /**
  * Continue an existing cs-recovery thread. Called when the bot is mentioned
  * inside a thread that already has an agent_threads record (created by an
- * earlier @bot mention or !cs command).
+ * earlier @bot mention).
  *
  * The user's new message becomes the next turn in the conversation. If they
  * gave us just identifiers (a receipt, an email) we forward those; otherwise

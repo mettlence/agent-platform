@@ -36,6 +36,27 @@ const INTENT_PATTERNS = [
   /\bpantau\b/i, // Indonesian: monitor
 ]
 
+// Stop intent. Checked BEFORE the start intent (every phrase here also
+// contains "monitor", so start would swallow it otherwise). Replaces the
+// removed `!stop-monitor` command — without this a scheduled monitor could
+// only be ended by waiting for it to expire.
+const STOP_PATTERNS = [
+  /\bstop\b/i,
+  /\bcancel\b/i,
+  /\bhalt\b/i,
+  /\bberhenti\b/i, // Indonesian: stop
+  /\bhentikan\b/i, // Indonesian: stop it
+  /\bmatikan\b/i, // Indonesian: turn off
+]
+
+export function looksLikeStopMonitorRequest(text: string): boolean {
+  if (!STOP_PATTERNS.some((re) => re.test(text))) return false
+  // "stop" alone is ambiguous; require it to be about a monitor. Prefix match
+  // (not \bmonitor\b) so "stop monitoring" counts — a trailing \b fails on the
+  // -ing form, which is how people actually phrase it.
+  return /\bmonitor/i.test(text) || /\bcron\s*job\b|\bcronjob\b/i.test(text) || /\bpantau\b/i.test(text)
+}
+
 export function looksLikeMonitorRequest(text: string): boolean {
   return INTENT_PATTERNS.some((re) => re.test(text))
 }

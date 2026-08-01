@@ -24,9 +24,8 @@ working link to paste into LiveAgent.
 
 ## Starting an investigation
 
-Two entry points, use whichever is faster.
-
-### 1. Mention the bot (natural form)
+Mention the bot. That's the only trigger — the old `!cs` / `!monitor` /
+`!help` prefix commands were removed; every one of them has a mention form.
 
 ```
 @bot ABC12345
@@ -43,19 +42,10 @@ The bot infers what it can from what you give it:
 - **Reply with `fix this`** — reads the message you're replying to plus recent
   thread history for context.
 
-### 2. Explicit `!cs` command
+To pin a specific ticket ID to the audit log, include it in the mention —
+otherwise the bot generates one from the Discord message id.
 
-```
-!cs <ticket-id> email=jane@example.com
-!cs 12345 email=jane@example.com receipt=ABC12345
-!cs 12345 email=jane@example.com project=asksabrina complaint="paid via paypal, no email"
-```
-
-Use this when you want the ticket ID pinned to the audit log or when the
-mention form is ambiguous. Project auto-detects from the receipt when
-provided.
-
-Type `!help` in a CS channel for the short reference.
+`@bot introduce yourself` gets you this guide back as an attachment.
 
 ## What happens next
 
@@ -88,8 +78,36 @@ Your options:
 - **💬** — reply in the thread with your question or extra context. The bot
   re-investigates using the new info.
 
-Any authenticated Discord member in the allowlisted channel can approve today.
-Per-role gating is not yet wired.
+Any authenticated Discord member in the allowlisted channel can approve a
+draft posted in a thread. Per-role gating is not yet wired. The one exception
+is the relay route below, where the draft is pinned to a single approver.
+
+## Tickets relayed by another bot (DM approval)
+
+A partner CS bot (Tala, which pulls tickets from LiveAgent) can hand a ticket
+over by mentioning this bot, for things it can't do itself — profile fixes
+like a wrong birthdate or name. That path keeps the channel quiet:
+
+1. The partner bot mentions this bot in the CS channel with the customer
+   email and what needs changing.
+2. This bot replies once in the channel — *"Processing … sending to
+   @approver for confirmation"* — and does the investigation in a thread.
+3. The draft is **DM'd to the approver**, not posted in the channel. Only
+   that person's ✅ / ❌ counts; a reaction from anyone else is ignored.
+4. On ✅ the action executes as usual, and the bot posts one summary back to
+   the channel: who approved, and the resulting link.
+
+So the channel sees exactly two messages per relayed ticket. The full
+investigation and audit trail still live in the thread.
+
+Requires `DISCORD_ALLOWED_BOT_IDS` (the partner bot's user id) and
+`DISCORD_APPROVER_USER_ID` (who approves). With either unset, mentions from
+bots are ignored entirely and nothing changes for human-filed tickets.
+
+**If the DM bounces** — because the approver has "Allow direct messages from
+server members" turned off — the bot says so in the channel and falls back to
+posting the draft in the thread. The ticket is never left waiting on an
+approval nobody can see.
 
 ## Follow-ups in the same thread
 
@@ -140,7 +158,7 @@ Send to customer or paste into LiveAgent reply.
 ```
 
 If you see `(reading generation still running — job JOBID...)`, the DB write
-succeeded but the reading is still being generated. Re-run `!cs <ticket>` in
+succeeded but the reading is still being generated. Re-mention the bot with the same receipt in
 a few minutes to fetch the link once ready.
 
 If you see `❌ Execution failed`, the pre-execution gate re-check caught a
@@ -153,13 +171,13 @@ The action was not applied — that's the safety design working.
   `DISCORD_CS_CHANNEL_IDS`. If it's a thread, the parent channel must be
   allowlisted.
 - **"Project auto-detect failed"** → pass `project=asksabrina` (or the right
-  brand) explicitly with `!cs`.
+  brand) explicitly in the mention.
 - **"Customer has no orders"** but you know they paid → the bot should have
   fetched their full ClickBank history and either drafted `create_order` or
   escalated. If it stops at "no orders", ping the on-call dev — that's a bug
   in the skill, not user error.
 - **Reading link 404s after ✅** → job may still be running; wait 2–3 minutes
-  and re-run `!cs <ticket>`. If still broken, escalate.
+  and re-mention the bot with the same receipt. If still broken, escalate.
 - **Bot posted a draft in the wrong thread** → don't ✅. Ping the dev — the
   approval is keyed by Discord message ID so nothing has been executed yet.
 
@@ -171,18 +189,10 @@ without polling the admin panel yourself.
 
 ### Start a monitor
 
-Natural form:
-
 ```
 @bot monitor pending asksabrina every 4h for 24h
+@bot monitor pending both every 4h for 24h
 @bot cronjob check pending both per 2h selama 12 jam
-```
-
-Explicit command form:
-
-```
-!monitor asksabrina every 4h for 24h
-!monitor both every 4h for 24h
 ```
 
 Bounds: interval 1min–24h, duration 1min–7d, duration ≥ one interval.
@@ -257,7 +267,7 @@ Reactions:
 Inside the monitor thread:
 
 ```
-!stop-monitor
+@bot stop monitor
 ```
 
 The bot confirms and stops firing further ticks. Auto-stop also happens
@@ -267,21 +277,21 @@ when the duration elapses.
 
 Only one active monitor per Discord thread. If you try to start a second
 one in the same thread, the bot rejects it and points you at
-`!stop-monitor` first. Start a fresh thread for a different schedule
+`@bot stop monitor` first. Start a fresh thread for a different schedule
 (different interval, different projects).
 
 ### Inline mode — dedicated monitor channels
 
 Ops can nominate one or more channels as **monitor channels** via the
-`DISCORD_MONITOR_CHANNEL_IDS` env var. When a `!monitor` / `@bot monitor`
+`DISCORD_MONITOR_CHANNEL_IDS` env var. When a `@bot monitor`
 runs in one of those channels, the bot **does not create a thread** —
 the draft, tick reports, and auto-proposals all post inline in the
-channel. `!stop-monitor` in the same channel stops it.
+channel. `@bot stop monitor` in the same channel stops it.
 
 Rules in inline mode:
-- **1 active monitor per channel.** Second `!monitor` in the same
-  channel is rejected until you stop the first with `!stop-monitor`.
-- Other commands (`!cs`, `@bot ABC12345`) still work in the same
+- **1 active monitor per channel.** A second `@bot monitor` in the same
+  channel is rejected until you stop the first with `@bot stop monitor`.
+- Recovery mentions (`@bot ABC12345`) still work in the same
   channel — they create their own threads as usual. So the channel
   ends up as: (monitor reports inline) + (any recovery threads that
   happened to be started there).

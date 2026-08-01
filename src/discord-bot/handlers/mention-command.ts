@@ -1,9 +1,15 @@
 import type { Message } from 'discord.js'
+import { ObjectId } from 'mongodb'
 import { runCsRecovery } from '@/agents/cs-recovery/index.js'
-import { createThreadFromMessage, sendToThread, startTyping } from '@/shared/connectors/discord.js'
-import { attachDiscordMessageId } from '@/shared/state/approvals.js'
+import {
+  createThreadFromMessage,
+  sendDM,
+  sendToThread,
+  startTyping,
+} from '@/shared/connectors/discord.js'
+import { attachApprovalDelivery, attachDiscordMessageId } from '@/shared/state/approvals.js'
 import { getOrderByReceipt } from '@/shared/connectors/clickbank.js'
-import { projectFromVendor } from '@/config/env.js'
+import { env, isAllowlistedBot, projectFromVendor } from '@/config/env.js'
 import { PROJECTS, PROJECT_KEYS, type ProjectKey } from '@/config/projects.js'
 import {
   extractAll,
@@ -13,7 +19,12 @@ import {
   type ExtractedTokens,
 } from '@/discord-bot/extractors.js'
 import { isIntroRequest, sendIntroReply } from './introduce.js'
-import { handleMonitorRequest, looksLikeMonitorRequest } from './monitor-command.js'
+import {
+  handleMonitorRequest,
+  handleStopMonitor,
+  looksLikeMonitorRequest,
+  looksLikeStopMonitorRequest,
+} from './monitor-command.js'
 import {
   handleFixPendingRequest,
   looksLikeFixPendingRequest,
@@ -50,6 +61,12 @@ export async function handleMentionCommand(message: Message): Promise<void> {
   // asked for a one-shot heal, not a scheduled monitor.
   if (looksLikeFixPendingRequest(stripped)) {
     await handleFixPendingRequest(message, stripped)
+    return
+  }
+  // Stop before start: "stop the monitor" matches the start intent too.
+  // This is the replacement for the removed `!stop-monitor` command.
+  if (looksLikeStopMonitorRequest(stripped)) {
+    await handleStopMonitor(message)
     return
   }
   if (looksLikeMonitorRequest(stripped)) {
@@ -143,6 +160,22 @@ export async function handleMentionCommand(message: Message): Promise<void> {
       : ''
   const complaintText = [ownFreeText, contextFreeText].filter(Boolean).join(' — ') || undefined
 
+  // Relay route: an allowlisted partner bot (Tala) handed us a ticket. The
+  // draft goes to the approver's DM instead of the thread, and the channel
+  // only ever sees two short lines — "processing" and the outcome. Requires
+  // BOTH an allowlisted bot and a configured approver; missing either falls
+  // back to the normal in-thread flow.
+  const approverId = env.DISCORD_APPROVER_USER_ID
+  const viaDM = message.author.bot && isAllowlistedBot(message.author.id) && !!approverId
+
+  if (viaDM) {
+    await replyNoPingBack(
+      message,
+      `🤖 Processing **${ticketId}** for **${email}** (${project}) — sending to <@${approverId}> for confirmation.`,
+      approverId,
+    )
+  }
+
   const thread = await createThreadFromMessage(message, `${ticketId} · cs-recovery`)
   // The "investigating ..." line gives instant feedback that the bot picked
   // up the ticket; once the final result lands we delete it so the thread
@@ -172,10 +205,39 @@ export async function handleMentionCommand(message: Message): Promise<void> {
     })
 
     if (result.status === 'drafted' && result.draft && result.approval_id) {
-      const draftMessage = await sendToThread(thread, formatDraft(result.draft))
-      await attachDiscordMessageId(result.approval_id, draftMessage.id)
-      await draftMessage.react('✅')
-      await draftMessage.react('❌')
+      const delivered = viaDM
+        ? await deliverDraftByDM({
+            approverId: approverId!,
+            approvalId: result.approval_id,
+            draft: result.draft,
+            ticketId,
+            email,
+            project,
+            originChannelId: message.channelId,
+            requestedBy: message.author.id,
+            threadUrl: thread.url,
+          })
+        : false
+
+      if (!delivered) {
+        // Either the normal in-thread route, or the DM bounced (recipient has
+        // DMs from server members off). Falling back keeps the draft visible
+        // rather than stranding the ticket on an approval nobody can see.
+        const draftMessage = await sendToThread(thread, formatDraft(result.draft))
+        await attachDiscordMessageId(result.approval_id, draftMessage.id)
+        await draftMessage.react('✅')
+        await draftMessage.react('❌')
+      }
+
+      if (viaDM) {
+        await replyNoPingBack(
+          message,
+          delivered
+            ? `📨 Sent to <@${approverId}> for confirmation. I'll post the result here once they decide.`
+            : `⚠️ Couldn't DM <@${approverId}> (DMs from server members may be off). Draft is waiting in the thread instead.`,
+          approverId!,
+        )
+      }
     } else if (result.status === 'escalated' && result.escalation) {
       await sendToThread(
         thread,
@@ -191,10 +253,23 @@ export async function handleMentionCommand(message: Message): Promise<void> {
           .filter(Boolean)
           .join('\n'),
       )
+      if (viaDM) {
+        await replyNoPingBack(
+          message,
+          `⚠️ Couldn't handle **${ticketId}** automatically — escalated to a human. Reason: ${result.escalation.reason}`,
+          approverId!,
+        )
+      }
     } else if (result.status === 'noop' && result.noop_message) {
       await sendToThread(thread, [`ℹ️ **No action needed**`, '', result.noop_message].join('\n'))
+      if (viaDM) {
+        await replyNoPingBack(message, `ℹ️ **${ticketId}** — no action needed. Nothing was changed.`, approverId!)
+      }
     } else if (result.status === 'error') {
       await sendToThread(thread, `❌ Error: \`${result.error}\``)
+      if (viaDM) {
+        await replyNoPingBack(message, `❌ **${ticketId}** failed: \`${result.error}\``, approverId!)
+      }
     }
     await investigatingMsg.delete().catch(() => {})
   } finally {
@@ -314,6 +389,67 @@ async function resolveProject(tokens: ExtractedTokens): Promise<Resolution> {
     ok: false,
     error: 'Need at least a receipt or an email to identify the customer.',
   }
+}
+
+/**
+ * Reply in the origin channel without pinging whoever we're replying to.
+ *
+ * Both halves matter when the requester is a bot: `repliedUser: false` drops
+ * the reply ping, and the `users` allowlist means the only mention that can
+ * actually notify anyone is the approver's. Without this, replying to a
+ * mention-answering bot is a plausible way to start a ping-pong loop.
+ */
+async function replyNoPingBack(
+  message: Message,
+  content: string,
+  approverId: string,
+): Promise<void> {
+  await message
+    .reply({ content, allowedMentions: { repliedUser: false, users: [approverId] } })
+    .catch(() => {})
+}
+
+/**
+ * Send the draft to the approver's DM and record where the approval lives.
+ * Returns false when Discord refused the DM so the caller can fall back to
+ * posting in-thread — a bounced DM must never leave the ticket silently
+ * waiting on an approval that was never delivered.
+ */
+async function deliverDraftByDM(opts: {
+  approverId: string
+  approvalId: ObjectId
+  draft: Record<string, unknown>
+  ticketId: string
+  email: string
+  project: ProjectKey
+  originChannelId: string
+  requestedBy: string
+  threadUrl: string
+}): Promise<boolean> {
+  const body = [
+    `🔐 **Approval needed** — relayed ticket **${opts.ticketId}**`,
+    `· customer: **${opts.email}**`,
+    `· project: **${opts.project}**`,
+    `· full investigation: ${opts.threadUrl}`,
+    '',
+    formatDraft(opts.draft),
+    '',
+    'The requesting channel is waiting; I post the outcome there either way.',
+  ].join('\n')
+
+  const dm = await sendDM(opts.approverId, body)
+  if (!dm) return false
+
+  await attachApprovalDelivery(opts.approvalId, {
+    discord_message_id: dm.id,
+    approval_channel: 'dm',
+    approver_user_id: opts.approverId,
+    origin_channel_id: opts.originChannelId,
+    requested_by: opts.requestedBy,
+  })
+  await dm.react('✅')
+  await dm.react('❌')
+  return true
 }
 
 function formatDraft(draft: Record<string, unknown>): string {

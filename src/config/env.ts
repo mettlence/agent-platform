@@ -35,6 +35,22 @@ const schema = z.object({
     .default('')
     .transform((v) => v.split(',').map((s) => s.trim()).filter(Boolean)),
   DISCORD_CS_LEAD_ROLE_ID: z.string().optional(),
+  // CSV of BOT user IDs allowed to trigger the agent by mentioning it. Empty
+  // (the default) keeps the historical behaviour of ignoring every bot.
+  //
+  // This exists so a partner CS bot (Tala) can hand tickets over. It is an
+  // explicit allowlist rather than a blanket "accept bots" because two bots
+  // that both answer mentions will ping-pong forever; the bot's own ID is
+  // rejected separately in discord-bot/client.ts.
+  DISCORD_ALLOWED_BOT_IDS: z
+    .string()
+    .optional()
+    .default('')
+    .transform((v) => v.split(',').map((s) => s.trim()).filter(Boolean)),
+  // Discord user ID that approves bot-relayed tickets over DM. When unset,
+  // every ticket keeps approving in-thread exactly as before — the DM route
+  // is opt-in and needs both this and a bot in DISCORD_ALLOWED_BOT_IDS.
+  DISCORD_APPROVER_USER_ID: z.string().optional(),
 
   // Single ClickBank API key (no separate dev key as of 2023-07-27).
   CLICKBANK_API_KEY: z.string().min(1),
@@ -61,4 +77,9 @@ export const VENDOR_PROJECT_MAP: Record<string, string> = {
 
 export function projectFromVendor(vendor: string): string | null {
   return VENDOR_PROJECT_MAP[vendor.toLowerCase().trim()] ?? null
+}
+
+/** True when this author is a bot we've explicitly agreed to take tickets from. */
+export function isAllowlistedBot(userId: string): boolean {
+  return env.DISCORD_ALLOWED_BOT_IDS.includes(userId)
 }
