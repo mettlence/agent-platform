@@ -37,6 +37,12 @@ export interface PendingApproval {
   origin_channel_id?: string
   /** Discord user/bot id that asked for this action. Audit + reply addressing. */
   requested_by?: string
+  /**
+   * Human users mentioned in the triggering message — typically the CS rep
+   * who owns the ticket. Echoed (and pinged) on the outcome message so they
+   * learn the result without watching the channel. Excludes bots and self.
+   */
+  notify_user_ids?: string[]
   created_at: Date
   expires_at: Date
   resolved_at?: Date
@@ -67,6 +73,7 @@ export async function attachApprovalDelivery(
     approver_user_id?: string
     origin_channel_id?: string
     requested_by?: string
+    notify_user_ids?: string[]
   },
 ): Promise<void> {
   await collection().updateOne({ _id: approvalId }, { $set: delivery })

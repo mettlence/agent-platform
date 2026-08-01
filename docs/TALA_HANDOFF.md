@@ -35,8 +35,54 @@ It escalates back to a human instead of guessing. Don't route these to it:
 - **Refunds or chargebacks** — never. Human decision.
 - **Email address changes** — deliberately not editable; it breaks Maropost
   sync and customer login.
-- **Anything older than 60 days** — likely already disputed.
+- **Login / account lockouts** — no capability at all. Poseidon can read and
+  patch profile data, but it cannot touch credentials, reset a password, or
+  unlock an account; no such endpoint is exposed to it. These stay on the
+  existing human path.
+  **But check what the customer actually means first.** Most "I can't get in"
+  tickets are really "I lost the link from my email" — that *is* the *request
+  link* case above and Poseidon handles it. Only a genuine credential problem
+  needs a human.
 - **Complaints with no email and no receipt** — it has nothing to look up.
+
+### The 60-day rule is narrower than it sounds
+
+The hard block lives on **one** operation: flipping an existing order to paid.
+Both brand APIs refuse that outright past 60 days, because an order that old
+has usually been disputed or charged back already.
+
+It is **not** a general age filter on tickets:
+
+| Case | Older than 60 days? |
+|---|---|
+| Profile change | Fine. No age limit. |
+| Request link | Fine. No age limit. |
+| Order not found / paid-but-no-access | Will be refused or escalated. |
+
+So an age check on Tala's side is only worth adding for the payment-recovery
+case. Applying it to all three would bounce perfectly valid tickets — a
+customer asking for a link to a reading they bought last year is normal, and
+Poseidon resolves it without complaint.
+
+## Brands
+
+Both **AskSabrina** and **AstroLoverSketch** are supported. Poseidon picks the
+brand from the receipt, or from the email when the customer exists on only one
+side. Name the brand in the message when the customer might exist on both.
+
+On regeneration specifically: Poseidon does **not** run any generation logic
+itself. It asks the brand's own backend to do it, and that backend runs its
+own pipeline with its own worker. The two brands' pipelines differ and always
+have — the split happens at the point Poseidon chooses which brand to call, so
+there is no shared "one universal regen path" that could be applied to the
+wrong brand. The same is true of the editable-field list, which differs per
+brand and is enforced by each brand's API rather than by Poseidon.
+
+⚠️ **Before the first live AstroLoverSketch ticket**, confirm with Rohmad that
+the ALS credentials are configured on the agent host. The code path is
+complete, but the connection details were still blank as of this writing, and
+an ALS ticket sent before they're filled in fails immediately rather than
+degrading gracefully. AskSabrina is configured and live.
 
 ## Message format
 
@@ -47,11 +93,17 @@ channel.
 both.** Without at least one of those, Poseidon replies asking for it and
 stops.
 
+**Keep tagging Leo** (or whoever owns the ticket) alongside @poseidon, exactly
+as WF5 does today. Extra mentions don't interfere with parsing — they're
+stripped before the message is read — and Poseidon now carries them through:
+whoever was tagged on the way in gets @-mentioned on the outcome message, so
+Leo is pinged when the link is ready rather than having to watch the channel.
+
 ### Minimum — will work
 
 ```
-@poseidon jane@example.com
-@poseidon ABC12345
+@poseidon @leo jane@example.com
+@poseidon @leo ABC12345
 ```
 
 Poseidon figures out the brand and pulls the customer's full history itself.
@@ -62,9 +114,9 @@ Use this when Tala genuinely has nothing else.
 Add, in plain words, what's wrong and what it should become:
 
 ```
-@poseidon jane@example.com — birthdate is wrong, should be 1990-05-14
-@poseidon jane@example.com — paid but no order, receipt ABC12345
-@poseidon jane@example.com — asking for her reading link, never got the email
+@poseidon @leo jane@example.com — birthdate is wrong, should be 1990-05-14
+@poseidon @leo jane@example.com — paid but no order, receipt ABC12345
+@poseidon @leo jane@example.com — asking for her link, never got the email
 ```
 
 The free text matters. Without it Poseidon only knows *who*, not *what*, and
@@ -73,9 +125,9 @@ tends to conclude nothing is broken.
 ### Rich — best case
 
 ```
-@poseidon ticket=LA-88421 jane@example.com ABC12345 asksabrina — customer says
-her birthdate was entered wrong at checkout, should be 1990-05-14 (currently
-1990-04-15). Reading already delivered.
+@poseidon @leo ticket=LA-88421 jane@example.com ABC12345 asksabrina — customer
+says her birthdate was entered wrong at checkout, should be 1990-05-14
+(currently 1990-04-15). Reading already delivered.
 ```
 
 `ticket=LA-88421` pins the LiveAgent ticket id into the audit log, so the
@@ -122,7 +174,8 @@ In the channel, exactly two messages per ticket:
 
 1. **Immediately:** `🤖 Processing <ticket> for <email> — sending to
    @rohmaddj for confirmation.`
-2. **After rohmaddj decides**, one of:
+2. **After rohmaddj decides** — addressed to whoever Tala tagged, so Leo is
+   pinged directly — one of:
    - `✅ @rohmaddj approved — <ticket> is done.` plus the reading / download
      link, which Leo can paste straight into the LiveAgent reply.
    - `❌ @rohmaddj rejected the change for <ticket> — nothing was modified.`

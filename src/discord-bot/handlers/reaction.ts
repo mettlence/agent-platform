@@ -195,7 +195,11 @@ async function announce(
   await postToThread(approval.thread_id, detail)
   const origin = approval.origin_channel_id
   if (origin && origin !== approval.thread_id && channelSummary) {
-    await postToThread(origin, channelSummary)
+    // Ping the humans the relaying bot tagged — usually the CS rep who owns
+    // the ticket and has to paste the link into the customer reply. Without
+    // this they'd have to be watching the channel to notice it landed.
+    const notify = (approval.notify_user_ids ?? []).map((id) => `<@${id}>`).join(' ')
+    await postToThread(origin, notify ? `${notify}\n${channelSummary}` : channelSummary)
   }
 }
 

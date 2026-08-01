@@ -3,6 +3,7 @@ import { ObjectId } from 'mongodb'
 import { runCsRecovery } from '@/agents/cs-recovery/index.js'
 import {
   createThreadFromMessage,
+  getDiscordClient,
   sendDM,
   sendToThread,
   startTyping,
@@ -167,12 +168,16 @@ export async function handleMentionCommand(message: Message): Promise<void> {
   // back to the normal in-thread flow.
   const approverId = env.DISCORD_APPROVER_USER_ID
   const viaDM = message.author.bot && isAllowlistedBot(message.author.id) && !!approverId
+  // Whoever the relaying bot tagged (the CS rep who owns the ticket) plus the
+  // approver — the only mentions allowed to actually notify anyone.
+  const notifyIds = viaDM ? humanMentionIds(message) : []
+  const pingIds = viaDM ? [...new Set([approverId!, ...notifyIds])] : []
 
   if (viaDM) {
     await replyNoPingBack(
       message,
       `🤖 Processing **${ticketId}** for **${email}** (${project}) — sending to <@${approverId}> for confirmation.`,
-      approverId,
+      pingIds,
     )
   }
 
@@ -215,6 +220,7 @@ export async function handleMentionCommand(message: Message): Promise<void> {
             project,
             originChannelId: message.channelId,
             requestedBy: message.author.id,
+            notifyUserIds: notifyIds,
             threadUrl: thread.url,
           })
         : false
@@ -235,7 +241,7 @@ export async function handleMentionCommand(message: Message): Promise<void> {
           delivered
             ? `📨 Sent to <@${approverId}> for confirmation. I'll post the result here once they decide.`
             : `⚠️ Couldn't DM <@${approverId}> (DMs from server members may be off). Draft is waiting in the thread instead.`,
-          approverId!,
+          pingIds,
         )
       }
     } else if (result.status === 'escalated' && result.escalation) {
@@ -257,18 +263,18 @@ export async function handleMentionCommand(message: Message): Promise<void> {
         await replyNoPingBack(
           message,
           `⚠️ Couldn't handle **${ticketId}** automatically — escalated to a human. Reason: ${result.escalation.reason}`,
-          approverId!,
+          pingIds,
         )
       }
     } else if (result.status === 'noop' && result.noop_message) {
       await sendToThread(thread, [`ℹ️ **No action needed**`, '', result.noop_message].join('\n'))
       if (viaDM) {
-        await replyNoPingBack(message, `ℹ️ **${ticketId}** — no action needed. Nothing was changed.`, approverId!)
+        await replyNoPingBack(message, `ℹ️ **${ticketId}** — no action needed. Nothing was changed.`, pingIds)
       }
     } else if (result.status === 'error') {
       await sendToThread(thread, `❌ Error: \`${result.error}\``)
       if (viaDM) {
-        await replyNoPingBack(message, `❌ **${ticketId}** failed: \`${result.error}\``, approverId!)
+        await replyNoPingBack(message, `❌ **${ticketId}** failed: \`${result.error}\``, pingIds)
       }
     }
     await investigatingMsg.delete().catch(() => {})
@@ -402,11 +408,26 @@ async function resolveProject(tokens: ExtractedTokens): Promise<Resolution> {
 async function replyNoPingBack(
   message: Message,
   content: string,
-  approverId: string,
+  pingIds: string[],
 ): Promise<void> {
   await message
-    .reply({ content, allowedMentions: { repliedUser: false, users: [approverId] } })
+    .reply({ content, allowedMentions: { repliedUser: false, users: pingIds } })
     .catch(() => {})
+}
+
+/**
+ * Human users @-mentioned in the triggering message, minus bots and us.
+ *
+ * When a partner bot relays a ticket it also tags the CS rep who owns it.
+ * That rep needs the outcome — they're the one pasting the link into the
+ * customer reply — so we carry their id through to the result message rather
+ * than relying on them watching the channel.
+ */
+function humanMentionIds(message: Message): string[] {
+  const selfId = getDiscordClient().user?.id
+  return [...message.mentions.users.values()]
+    .filter((u) => !u.bot && u.id !== selfId)
+    .map((u) => u.id)
 }
 
 /**
@@ -424,6 +445,7 @@ async function deliverDraftByDM(opts: {
   project: ProjectKey
   originChannelId: string
   requestedBy: string
+  notifyUserIds: string[]
   threadUrl: string
 }): Promise<boolean> {
   const body = [
@@ -446,6 +468,7 @@ async function deliverDraftByDM(opts: {
     approver_user_id: opts.approverId,
     origin_channel_id: opts.originChannelId,
     requested_by: opts.requestedBy,
+    notify_user_ids: opts.notifyUserIds,
   })
   await dm.react('✅')
   await dm.react('❌')
