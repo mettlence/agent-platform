@@ -3,6 +3,30 @@
 Audience: whoever maintains Tala's instructions, plus CS (Leo) so everyone
 knows what changed and who still signs off.
 
+## Answers to the four review items
+
+Revision 2. If you reviewed the first version, these are the only parts that
+changed — the rest is unmodified.
+
+1. **Login / account lockouts** — correct, no capability, and now an explicit
+   carve-out under *What Poseidon will NOT take*. They stay on the human path.
+   One thing worth checking before you route one: most "I can't get in"
+   tickets turn out to be "I lost my link", which **is** handled.
+2. **The 60-day cutoff** — the first version overstated this and would have
+   led you to add a filter that bounces valid tickets. It is enforced on
+   exactly one operation (flipping an existing order to paid), not on tickets
+   in general. See *The 60-day rule is narrower than it sounds*. An age check
+   on your side is only worth it for the payment-recovery case.
+3. **Dual-brand regeneration** — answered under *Brands*. Short version: the
+   agent runs no generation logic of its own, it asks each brand's backend,
+   so the two pipelines cannot be crossed. There is a separate config caveat
+   for AstroLoverSketch flagged in that section — please read it before
+   sending an ALS ticket.
+4. **Leo's visibility** — yes, keep tagging Leo. That was a real gap and it
+   has been fixed on our side too: whoever you tag on the way in is now
+   @-mentioned on the outcome message, so Leo is pinged when the link is
+   ready instead of having to watch the channel.
+
 ## What changes
 
 Today, when Leo hits a technical problem in LiveAgent — a profile that needs
