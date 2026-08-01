@@ -5,6 +5,7 @@ Multi-project agent service. First agent: `cs-recovery` — recovers customer or
 **Docs:**
 - [`docs/USAGE.md`](docs/USAGE.md) — for CS + operators using the Discord bot day-to-day.
 - [`docs/AGENT_GUIDE.md`](docs/AGENT_GUIDE.md) — for a dev or AI agent extending the platform.
+- [`docs/TALA_HANDOFF.md`](docs/TALA_HANDOFF.md) — message format + rules for the partner CS bot (Tala) relaying tickets to this one.
 
 ## Status
 
