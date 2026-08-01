@@ -183,13 +183,16 @@ export async function handleMentionCommand(message: Message): Promise<void> {
       }
     : undefined
 
-  if (viaDM) {
-    await replyNoPingBack(
-      message,
-      `🤖 Processing **${ticketId}** for **${email}** (${project}) — sending to <@${approverId}> for confirmation.`,
-      pingIds,
-    )
-  }
+  // One status message per relayed ticket, edited in place as the ticket
+  // moves. Posting a fresh line per transition turned a two-line protocol
+  // into three or four, which is the clutter the relay route exists to avoid.
+  const ack = viaDM
+    ? await replyNoPingBack(
+        message,
+        `🤖 **${ticketId}** · ${email} · ${project} — investigating…`,
+        pingIds,
+      )
+    : null
 
   // Relayed tickets get a detached private thread so the channel isn't left
   // with a "N Messages ›" strip under every handover. Falls back to the
@@ -255,11 +258,12 @@ export async function handleMentionCommand(message: Message): Promise<void> {
       }
 
       if (viaDM) {
-        await replyNoPingBack(
+        await updateAck(
+          ack,
           message,
           delivered
-            ? `📨 Sent to <@${approverId}> for confirmation. I'll post the result here once they decide.`
-            : `⚠️ Couldn't DM <@${approverId}> (DMs from server members may be off). Draft is waiting in the thread instead.`,
+            ? `📨 **${ticketId}** · ${email} — waiting on <@${approverId}> to confirm.`
+            : `⚠️ **${ticketId}** — couldn't DM <@${approverId}> (DMs from server members may be off). Draft is in the thread instead.`,
           pingIds,
         )
       }
@@ -279,21 +283,22 @@ export async function handleMentionCommand(message: Message): Promise<void> {
           .join('\n'),
       )
       if (viaDM) {
-        await replyNoPingBack(
+        await updateAck(
+          ack,
           message,
-          `⚠️ Couldn't handle **${ticketId}** automatically — escalated to a human. Reason: ${result.escalation.reason}`,
+          `⚠️ **${ticketId}** — escalated to a human. ${result.escalation.reason}`,
           pingIds,
         )
       }
     } else if (result.status === 'noop' && result.noop_message) {
       await sendToThread(thread, [`ℹ️ **No action needed**`, '', result.noop_message].join('\n'))
       if (viaDM) {
-        await replyNoPingBack(message, `ℹ️ **${ticketId}** — no action needed. Nothing was changed.`, pingIds)
+        await updateAck(ack, message, `ℹ️ **${ticketId}** — no action needed. Nothing changed.`, pingIds)
       }
     } else if (result.status === 'error') {
       await sendToThread(thread, `❌ Error: \`${result.error}\``)
       if (viaDM) {
-        await replyNoPingBack(message, `❌ **${ticketId}** failed: \`${result.error}\``, pingIds)
+        await updateAck(ack, message, `❌ **${ticketId}** failed: \`${result.error}\``, pingIds)
       }
     }
     await investigatingMsg.delete().catch(() => {})
@@ -428,10 +433,32 @@ async function replyNoPingBack(
   message: Message,
   content: string,
   pingIds: string[],
-): Promise<void> {
-  await message
+): Promise<Message | null> {
+  return message
     .reply({ content, allowedMentions: { repliedUser: false, users: pingIds } })
-    .catch(() => {})
+    .catch(() => null)
+}
+
+/**
+ * Advance the single status line rather than posting another one.
+ *
+ * An edit deliberately does NOT re-notify anyone — the approver was already
+ * pinged when the line first appeared, and the outcome later arrives as its
+ * own message precisely because that one does need to notify.
+ */
+async function updateAck(
+  ack: Message | null,
+  original: Message,
+  content: string,
+  pingIds: string[],
+): Promise<void> {
+  if (ack) {
+    await ack
+      .edit({ content, allowedMentions: { repliedUser: false, users: pingIds } })
+      .catch(() => {})
+    return
+  }
+  await replyNoPingBack(original, content, pingIds)
 }
 
 /**
