@@ -2,6 +2,7 @@ import type { Message } from 'discord.js'
 import { ObjectId } from 'mongodb'
 import { runCsRecovery } from '@/agents/cs-recovery/index.js'
 import {
+  createDetachedThread,
   createThreadFromMessage,
   getDiscordClient,
   sendDM,
@@ -190,7 +191,18 @@ export async function handleMentionCommand(message: Message): Promise<void> {
     )
   }
 
-  const thread = await createThreadFromMessage(message, `${ticketId} · cs-recovery`)
+  // Relayed tickets get a detached private thread so the channel isn't left
+  // with a "N Messages ›" strip under every handover. Falls back to the
+  // message-anchored thread if the bot can't create one — an ugly thread
+  // beats no thread, which would take the audit trail and follow-ups with it.
+  const thread =
+    (relayCtx
+      ? await createDetachedThread(
+          message.channel,
+          `${ticketId} · cs-recovery`,
+          [relayCtx.approver_user_id, ...relayCtx.notify_user_ids],
+        )
+      : null) ?? (await createThreadFromMessage(message, `${ticketId} · cs-recovery`))
   // The "investigating ..." line gives instant feedback that the bot picked
   // up the ticket; once the final result lands we delete it so the thread
   // reads as just (user mention) → (bot answer) without scaffolding noise.
