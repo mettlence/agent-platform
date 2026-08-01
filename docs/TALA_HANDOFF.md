@@ -102,11 +102,36 @@ there is no shared "one universal regen path" that could be applied to the
 wrong brand. The same is true of the editable-field list, which differs per
 brand and is enforced by each brand's API rather than by Poseidon.
 
-⚠️ **Before the first live AstroLoverSketch ticket**, confirm with Rohmad that
-the ALS credentials are configured on the agent host. The code path is
-complete, but the connection details were still blank as of this writing, and
-an ALS ticket sent before they're filled in fails immediately rather than
-degrading gracefully. AskSabrina is configured and live.
+ALS credentials are now configured on the agent host (confirmed 2026-08-01),
+so both brands are reachable. No ALS ticket has actually been run end-to-end
+yet — see the verification status below.
+
+## Verification status
+
+Fair challenge from the review: a document describing safety properties is not
+the same as those properties existing. So, precisely, as of **2026-08-01**:
+
+**Verified against the running system**
+
+- The service is live and healthy.
+- The audit log is real and in use — 30 executed actions on record. Every
+  recent one carries the Discord id of the human who approved it and the list
+  of gates that passed (3–5 per action).
+- The approve → execute → audit chain has run for real in production,
+  including successful order recoveries. This is not a new or untested path.
+
+**NOT verified — this is what the live test needs to cover**
+
+- **The relay / DM route has never run.** Zero approvals in the database were
+  delivered by DM; every one so far was approved in-thread. It deployed the
+  same day this document was written.
+- The two-message channel protocol.
+- Whether the tagged CS rep is actually pinged on the outcome message. This is
+  the newest code and the least exercised.
+- Any AstroLoverSketch ticket end-to-end.
+
+Treat the second list as unproven until one live test mention has gone through
+on a throwaway address. Do not switch real ticket routing over before that.
 
 ## Message format
 
