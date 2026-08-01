@@ -14,6 +14,7 @@ import {
   getThread,
   tryMarkBusy,
   type ThreadInitCtx,
+  type ThreadRelayCtx,
 } from '@/shared/state/threads.js'
 import { createApproval } from '@/shared/state/approvals.js'
 import { loadActiveLessons } from '@/shared/state/lessons.js'
@@ -30,6 +31,9 @@ export interface RunInput {
   clickbank_receipt?: string
   complaint_text?: string
   trigger_user_id: string            // discord user who invoked
+  /** Set when a partner bot relayed this ticket — persisted so follow-up
+   *  turns keep routing approvals to the same person. */
+  relay?: ThreadRelayCtx
 }
 
 export interface RunOutput {
@@ -61,6 +65,7 @@ export async function runCsRecovery(input: RunInput): Promise<RunOutput> {
       project: input.project,
       agent: 'cs-recovery',
       init_ctx,
+      ...(input.relay ? { relay: input.relay } : {}),
     })
   }
 

@@ -14,6 +14,21 @@ export interface ThreadInitCtx {
   trigger_user_id: string
 }
 
+/**
+ * Set when the ticket arrived from an allowlisted partner bot rather than a
+ * human in the channel. Recorded on the thread — not merely on the first
+ * approval — because a relayed ticket's FIRST turn often produces no approval
+ * at all (a no-op or an escalation), and the follow-up turn still has to keep
+ * the same approval discipline. Without this, continuing a relayed ticket in
+ * the thread would quietly downgrade it to "anyone in the channel can ✅".
+ */
+export interface ThreadRelayCtx {
+  approver_user_id: string
+  origin_channel_id: string
+  requested_by: string
+  notify_user_ids: string[]
+}
+
 export interface AgentThread {
   _id: string                  // discord thread id
   ticket_id: string
@@ -21,6 +36,8 @@ export interface AgentThread {
   agent: string
   status: 'active' | 'busy' | 'completed' | 'archived'
   messages: Message[]
+  /** Present only on tickets relayed in by a partner bot. */
+  relay?: ThreadRelayCtx
   /** Present on threads created via mention/cs-command since the multi-turn
    *  refactor. Older threads predate this and won't have it — continuation
    *  on those should bail or ask the user to re-supply identifiers. */

@@ -8,7 +8,8 @@ import {
   sendToThread,
   startTyping,
 } from '@/shared/connectors/discord.js'
-import { attachApprovalDelivery, attachDiscordMessageId } from '@/shared/state/approvals.js'
+import { attachDiscordMessageId } from '@/shared/state/approvals.js'
+import { deliverDraftByDM, formatDraft } from './draft-delivery.js'
 import { getOrderByReceipt } from '@/shared/connectors/clickbank.js'
 import { env, isAllowlistedBot, projectFromVendor } from '@/config/env.js'
 import { PROJECTS, PROJECT_KEYS, type ProjectKey } from '@/config/projects.js'
@@ -172,6 +173,14 @@ export async function handleMentionCommand(message: Message): Promise<void> {
   // approver — the only mentions allowed to actually notify anyone.
   const notifyIds = viaDM ? humanMentionIds(message) : []
   const pingIds = viaDM ? [...new Set([approverId!, ...notifyIds])] : []
+  const relayCtx = viaDM
+    ? {
+        approver_user_id: approverId!,
+        origin_channel_id: message.channelId,
+        requested_by: message.author.id,
+        notify_user_ids: notifyIds,
+      }
+    : undefined
 
   if (viaDM) {
     await replyNoPingBack(
@@ -207,20 +216,18 @@ export async function handleMentionCommand(message: Message): Promise<void> {
       clickbank_receipt: receipt,
       complaint_text: complaintText,
       trigger_user_id: message.author.id,
+      ...(relayCtx ? { relay: relayCtx } : {}),
     })
 
     if (result.status === 'drafted' && result.draft && result.approval_id) {
       const delivered = viaDM
         ? await deliverDraftByDM({
-            approverId: approverId!,
+            relay: relayCtx!,
             approvalId: result.approval_id,
             draft: result.draft,
             ticketId,
             email,
             project,
-            originChannelId: message.channelId,
-            requestedBy: message.author.id,
-            notifyUserIds: notifyIds,
             threadUrl: thread.url,
           })
         : false
@@ -430,57 +437,3 @@ function humanMentionIds(message: Message): string[] {
     .map((u) => u.id)
 }
 
-/**
- * Send the draft to the approver's DM and record where the approval lives.
- * Returns false when Discord refused the DM so the caller can fall back to
- * posting in-thread — a bounced DM must never leave the ticket silently
- * waiting on an approval that was never delivered.
- */
-async function deliverDraftByDM(opts: {
-  approverId: string
-  approvalId: ObjectId
-  draft: Record<string, unknown>
-  ticketId: string
-  email: string
-  project: ProjectKey
-  originChannelId: string
-  requestedBy: string
-  notifyUserIds: string[]
-  threadUrl: string
-}): Promise<boolean> {
-  const body = [
-    `🔐 **Approval needed** — relayed ticket **${opts.ticketId}**`,
-    `· customer: **${opts.email}**`,
-    `· project: **${opts.project}**`,
-    `· full investigation: ${opts.threadUrl}`,
-    '',
-    formatDraft(opts.draft),
-    '',
-    'The requesting channel is waiting; I post the outcome there either way.',
-  ].join('\n')
-
-  const dm = await sendDM(opts.approverId, body)
-  if (!dm) return false
-
-  await attachApprovalDelivery(opts.approvalId, {
-    discord_message_id: dm.id,
-    approval_channel: 'dm',
-    approver_user_id: opts.approverId,
-    origin_channel_id: opts.originChannelId,
-    requested_by: opts.requestedBy,
-    notify_user_ids: opts.notifyUserIds,
-  })
-  await dm.react('✅')
-  await dm.react('❌')
-  return true
-}
-
-function formatDraft(draft: Record<string, unknown>): string {
-  return [
-    '📝 **Proposed action**',
-    '```json',
-    JSON.stringify(draft, null, 2),
-    '```',
-    'React ✅ to execute, ❌ to skip.',
-  ].join('\n')
-}

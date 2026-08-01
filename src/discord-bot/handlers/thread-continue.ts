@@ -2,6 +2,7 @@ import type { Message, ThreadChannel } from 'discord.js'
 import { continueCsRecovery, type ContinuationOverrides } from '@/agents/cs-recovery/index.js'
 import { sendToThread, startTyping } from '@/shared/connectors/discord.js'
 import { attachDiscordMessageId } from '@/shared/state/approvals.js'
+import { deliverDraftByDM, formatDraft } from './draft-delivery.js'
 import { getThread } from '@/shared/state/threads.js'
 import { extractAll, extractFreeText, stripDiscordMentions } from '@/discord-bot/extractors.js'
 
@@ -64,10 +65,40 @@ export async function handleThreadContinuation(message: Message): Promise<void> 
     const result = await continueCsRecovery(thread.id, userText, overrides)
 
     if (result.status === 'drafted' && result.draft && result.approval_id) {
-      const draftMessage = await sendToThread(thread, formatDraft(result.draft))
-      await attachDiscordMessageId(result.approval_id, draftMessage.id)
-      await draftMessage.react('✅')
-      await draftMessage.react('❌')
+      // A relayed ticket keeps its approval discipline across follow-ups.
+      // Posting this draft in-thread instead would quietly hand approval
+      // rights to anyone in the channel, which is the property the DM route
+      // exists to prevent.
+      const delivered = existing?.relay
+        ? await deliverDraftByDM({
+            relay: existing.relay,
+            approvalId: result.approval_id,
+            draft: result.draft,
+            ticketId: existing.ticket_id,
+            email: overrides.customer_email ?? init?.customer_email ?? '(unknown)',
+            project: overrides.project ?? existing.project,
+            threadUrl: thread.url,
+            followUp: true,
+          })
+        : false
+
+      if (delivered) {
+        await sendToThread(
+          thread,
+          `📨 Draft sent to <@${existing!.relay!.approver_user_id}> for confirmation.`,
+        )
+      } else {
+        if (existing?.relay) {
+          await sendToThread(
+            thread,
+            `⚠️ Couldn't DM <@${existing.relay.approver_user_id}> — draft posted here instead.`,
+          )
+        }
+        const draftMessage = await sendToThread(thread, formatDraft(result.draft))
+        await attachDiscordMessageId(result.approval_id, draftMessage.id)
+        await draftMessage.react('✅')
+        await draftMessage.react('❌')
+      }
     } else if (result.status === 'escalated' && result.escalation) {
       await sendToThread(
         thread,
@@ -93,12 +124,3 @@ export async function handleThreadContinuation(message: Message): Promise<void> 
   }
 }
 
-function formatDraft(draft: Record<string, unknown>): string {
-  return [
-    '📝 **Proposed action**',
-    '```json',
-    JSON.stringify(draft, null, 2),
-    '```',
-    'React ✅ to execute, ❌ to skip.',
-  ].join('\n')
-}
