@@ -133,6 +133,33 @@ the same as those properties existing. So, precisely, as of **2026-08-01**:
 Treat the second list as unproven until one live test mention has gone through
 on a throwaway address. Do not switch real ticket routing over before that.
 
+## How to actually mention Poseidon — read this first
+
+Poseidon's Discord user id:
+
+```
+1519579713226670172        (username: poseidon)
+```
+
+**Send the raw mention syntax, not the display name.** These are not the same
+thing:
+
+| What you send | Result |
+|---|---|
+| `<@1519579713226670172>` | ✅ a real mention — Poseidon is triggered |
+| `@poseidon` | ❌ plain text — Poseidon never sees it, nothing happens |
+
+Discord only turns `<@id>` into a mention. The `@poseidon` form is what a
+human gets after picking the bot from the autocomplete popup; it is **not**
+something a bot can produce by typing the name. A message sent over the API
+containing the literal string `@poseidon` fails silently — no error, no reply,
+no trace. This has already caught us once.
+
+The same applies to whoever you tag alongside: use their id in `<@id>` form.
+
+Everywhere below, `@poseidon` and `@leo` are written for readability. Send the
+snowflake form.
+
 ## Message format
 
 One mention = one customer. Everything goes in a single message in the CS
@@ -149,6 +176,14 @@ whoever was tagged on the way in gets @-mentioned on the outcome message, so
 Leo is pinged when the link is ready rather than having to watch the channel.
 
 ### Minimum — will work
+
+As actually sent over the API:
+
+```
+<@1519579713226670172> <@LEO_USER_ID> jane@example.com
+```
+
+Which renders in the channel as:
 
 ```
 @poseidon @leo jane@example.com
