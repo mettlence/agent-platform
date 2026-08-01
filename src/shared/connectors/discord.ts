@@ -1,5 +1,4 @@
 import {
-  ChannelType,
   Client,
   GatewayIntentBits,
   Partials,
@@ -87,12 +86,19 @@ export async function sendToThread(
   return last!
 }
 
+/**
+ * Send to a channel/thread by id. Returns null rather than throwing when the
+ * id doesn't resolve — relayed tickets have no Discord thread and key their
+ * state on the triggering message id instead, so fetching it as a channel
+ * legitimately fails (10003 Unknown Channel). Callers route that output
+ * elsewhere; a throw here would abort the outcome message entirely.
+ */
 export async function postToThread(
   targetId: string,
   content: string,
 ): Promise<Message | null> {
   const c = getDiscordClient()
-  const channel = await c.channels.fetch(targetId)
+  const channel = await c.channels.fetch(targetId).catch(() => null)
   if (!channel || !('send' in channel)) return null
   return sendToThread(channel as PostTarget, content)
 }
@@ -127,44 +133,6 @@ export async function createThreadFromMessage(
   })
 }
 
-/**
- * Create a thread that is NOT anchored to a message.
- *
- * A thread started from a message hangs a permanent "N Messages ›" strip
- * under it in the channel. For relayed tickets the whole point is that the
- * channel shows two clean lines, so the investigation goes in a detached
- * private thread instead — same capabilities, no inline clutter.
- *
- * `members` are added explicitly because a private thread is invisible to
- * anyone who isn't in it: without this the approver would get a DM linking to
- * a thread they can't open.
- *
- * Returns null when the channel can't host one or the bot lacks the
- * permission, so the caller can fall back to the message-anchored form rather
- * than losing the thread entirely.
- */
-export async function createDetachedThread(
-  channel: unknown,
-  name: string,
-  members: string[] = [],
-): Promise<ThreadChannel | null> {
-  const c = channel as TextChannel
-  if (!c?.threads?.create) return null
-  try {
-    const thread = await c.threads.create({
-      name,
-      autoArchiveDuration: 1440, // 24h
-      type: ChannelType.PrivateThread,
-      invitable: false,
-    })
-    for (const id of members) {
-      await thread.members.add(id).catch(() => {})
-    }
-    return thread
-  } catch {
-    return null
-  }
-}
 
 /**
  * Show the "Bot is typing…" indicator while a long-running task is in flight.

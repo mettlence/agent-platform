@@ -3,7 +3,7 @@ import { ObjectId } from 'mongodb'
 import pino from 'pino'
 import { findByMessageId, resolveApproval, type PendingApproval } from '@/shared/state/approvals.js'
 import { executeApprovedAction, type DraftAction } from '@/agents/cs-recovery/executor.js'
-import { postToThread } from '@/shared/connectors/discord.js'
+import { postToThread, sendDM } from '@/shared/connectors/discord.js'
 import { createMonitor } from '@/shared/state/monitors.js'
 import { kickPendingMonitorLoop } from '@/agents/pending-monitor/loop.js'
 import type { ProjectKey } from '@/config/projects.js'
@@ -67,9 +67,14 @@ export async function handleReactionAdd(
   const resolved = await resolveApproval(messageId, 'approved', userId)
   if (!resolved) return                        // race — already resolved
 
-  // Thread only: the origin channel gets one combined message after the work
-  // finishes, rather than an "executing" line followed by a result line.
-  await postToThread(approval.thread_id, `✅ Approved by <@${userId}>. Executing...`)
+  // Progress note goes to wherever the detail lives — the thread, or the DM
+  // for relayed tickets. The origin channel gets one combined message after
+  // the work finishes, not an "executing" line followed by a result line.
+  if (approval.approval_channel === 'dm' && approval.approver_user_id) {
+    await sendDM(approval.approver_user_id, `✅ Approved. Executing…`)
+  } else {
+    await postToThread(approval.thread_id, `✅ Approved by <@${userId}>. Executing...`)
+  }
 
   const draftedAction = approval.drafted_action as { action_type?: string } & Record<string, unknown>
 
@@ -192,7 +197,14 @@ async function announce(
   detail: string,
   channelSummary?: string,
 ): Promise<void> {
-  await postToThread(approval.thread_id, detail)
+  // Relayed tickets have no thread — their thread_id is the triggering
+  // message id, which won't resolve as a channel. Their detail belongs in the
+  // approver's DM anyway, which is where they just reacted.
+  if (approval.approval_channel === 'dm' && approval.approver_user_id) {
+    await sendDM(approval.approver_user_id, detail)
+  } else {
+    await postToThread(approval.thread_id, detail)
+  }
   const origin = approval.origin_channel_id
   if (origin && origin !== approval.thread_id && channelSummary) {
     // Ping the humans the relaying bot tagged — usually the CS rep who owns

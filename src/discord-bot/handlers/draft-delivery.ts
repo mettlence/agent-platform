@@ -36,7 +36,8 @@ export async function deliverDraftByDM(opts: {
   ticketId: string
   email: string
   project: string
-  threadUrl: string
+  /** Only present on the threaded path; relayed tickets have no thread. */
+  threadUrl?: string
   /** Marks a draft produced by a follow-up turn rather than the opening one. */
   followUp?: boolean
 }): Promise<boolean> {
@@ -46,7 +47,7 @@ export async function deliverDraftByDM(opts: {
     }`,
     `· customer: **${opts.email}**`,
     `· project: **${opts.project}**`,
-    `· full investigation: ${opts.threadUrl}`,
+    ...(opts.threadUrl ? [`· full investigation: ${opts.threadUrl}`] : []),
     '',
     formatDraft(opts.draft),
     '',

@@ -2,7 +2,6 @@ import type { Message } from 'discord.js'
 import { ObjectId } from 'mongodb'
 import { runCsRecovery } from '@/agents/cs-recovery/index.js'
 import {
-  createDetachedThread,
   createThreadFromMessage,
   getDiscordClient,
   sendDM,
@@ -194,37 +193,54 @@ export async function handleMentionCommand(message: Message): Promise<void> {
       )
     : null
 
-  // Relayed tickets get a detached private thread so the channel isn't left
-  // with a "N Messages ›" strip under every handover. Falls back to the
-  // message-anchored thread if the bot can't create one — an ugly thread
-  // beats no thread, which would take the audit trail and follow-ups with it.
-  const thread =
-    (relayCtx
-      ? await createDetachedThread(
-          message.channel,
-          `${ticketId} · cs-recovery`,
-          [relayCtx.approver_user_id, ...relayCtx.notify_user_ids],
-        )
-      : null) ?? (await createThreadFromMessage(message, `${ticketId} · cs-recovery`))
-  // The "investigating ..." line gives instant feedback that the bot picked
-  // up the ticket; once the final result lands we delete it so the thread
-  // reads as just (user mention) → (bot answer) without scaffolding noise.
-  const investigatingMsg = await sendToThread(
-    thread,
-    [
-      `🤖 Investigating **${ticketId}** for **${email}**`,
-      `· project: **${project}** (via ${source})`,
-      receipt ? `· receipt: \`${receipt}\`` : null,
-      contextSource !== 'self' ? `· context: ${contextSource}` : null,
-    ]
-      .filter(Boolean)
-      .join('\n'),
-  )
+  // Relayed tickets get NO thread at all. A message-anchored thread leaves a
+  // "N Messages ›" strip under the handover; a detached private thread still
+  // lists in the sidebar. Both defeat the point of a two-line protocol, so the
+  // transcript stays in Mongo and long-form detail goes to the approver's DM,
+  // where they are already reading the draft.
+  //
+  // The cost, stated plainly: with no thread there is nowhere to hold a
+  // follow-up turn, so a relayed ticket is single-shot. A follow-up means
+  // relaying a fresh mention.
+  const thread = viaDM
+    ? null
+    : await createThreadFromMessage(message, `${ticketId} · cs-recovery`)
 
-  const stopTyping = startTyping(thread)
+  // agent_threads is keyed by this. With no Discord thread we key on the
+  // triggering message id — unique, stable, and it can never collide with a
+  // real thread id.
+  const threadId = thread?.id ?? message.id
+
+  // Where long-form output goes: the thread for human-filed tickets, the
+  // approver's DM for relayed ones.
+  const postDetail = async (text: string): Promise<void> => {
+    if (thread) {
+      await sendToThread(thread, text)
+      return
+    }
+    if (relayCtx) await sendDM(relayCtx.approver_user_id, text)
+  }
+
+  // Scaffolding for the threaded path only — the relay path already showed an
+  // "investigating…" status line in the channel.
+  const investigatingMsg = thread
+    ? await sendToThread(
+        thread,
+        [
+          `🤖 Investigating **${ticketId}** for **${email}**`,
+          `· project: **${project}** (via ${source})`,
+          receipt ? `· receipt: \`${receipt}\`` : null,
+          contextSource !== 'self' ? `· context: ${contextSource}` : null,
+        ]
+          .filter(Boolean)
+          .join('\n'),
+      )
+    : null
+
+  const stopTyping = startTyping(thread ?? message.channel)
   try {
     const result = await runCsRecovery({
-      thread_id: thread.id,
+      thread_id: threadId,
       ticket_id: ticketId,
       project,
       customer_email: email,
@@ -243,15 +259,19 @@ export async function handleMentionCommand(message: Message): Promise<void> {
             ticketId,
             email,
             project,
-            threadUrl: thread.url,
           })
         : false
 
       if (!delivered) {
         // Either the normal in-thread route, or the DM bounced (recipient has
-        // DMs from server members off). Falling back keeps the draft visible
-        // rather than stranding the ticket on an approval nobody can see.
-        const draftMessage = await sendToThread(thread, formatDraft(result.draft))
+        // DMs from server members off). With no thread to fall back into, the
+        // draft goes in the channel — noisy, but never silently lost.
+        const draftMessage = thread
+          ? await sendToThread(thread, formatDraft(result.draft))
+          : await message.reply({
+              content: formatDraft(result.draft),
+              allowedMentions: { repliedUser: false, users: pingIds },
+            })
         await attachDiscordMessageId(result.approval_id, draftMessage.id)
         await draftMessage.react('✅')
         await draftMessage.react('❌')
@@ -263,15 +283,14 @@ export async function handleMentionCommand(message: Message): Promise<void> {
           message,
           delivered
             ? `📨 **${ticketId}** · ${email} — waiting on <@${approverId}> to confirm.`
-            : `⚠️ **${ticketId}** — couldn't DM <@${approverId}> (DMs from server members may be off). Draft is in the thread instead.`,
+            : `⚠️ **${ticketId}** — couldn't DM <@${approverId}> (DMs from server members may be off). Draft posted here instead.`,
           pingIds,
         )
       }
     } else if (result.status === 'escalated' && result.escalation) {
-      await sendToThread(
-        thread,
+      await postDetail(
         [
-          `⚠️ **Escalating to human**`,
+          `⚠️ **Escalating to human** — ${ticketId}`,
           `**Reason:** ${result.escalation.reason}`,
           '',
           result.escalation.summary,
@@ -291,17 +310,17 @@ export async function handleMentionCommand(message: Message): Promise<void> {
         )
       }
     } else if (result.status === 'noop' && result.noop_message) {
-      await sendToThread(thread, [`ℹ️ **No action needed**`, '', result.noop_message].join('\n'))
+      await postDetail([`ℹ️ **No action needed** — ${ticketId}`, '', result.noop_message].join('\n'))
       if (viaDM) {
         await updateAck(ack, message, `ℹ️ **${ticketId}** — no action needed. Nothing changed.`, pingIds)
       }
     } else if (result.status === 'error') {
-      await sendToThread(thread, `❌ Error: \`${result.error}\``)
+      await postDetail(`❌ Error on ${ticketId}: \`${result.error}\``)
       if (viaDM) {
         await updateAck(ack, message, `❌ **${ticketId}** failed: \`${result.error}\``, pingIds)
       }
     }
-    await investigatingMsg.delete().catch(() => {})
+    await investigatingMsg?.delete().catch(() => {})
   } finally {
     stopTyping()
   }
