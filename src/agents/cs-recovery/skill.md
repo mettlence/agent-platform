@@ -1,6 +1,6 @@
 ---
 name: cs-recovery
-version: 0.1.0
+version: 0.2.0
 description: Recover customer orders that failed backend payment validation.
   Verify payment via ClickBank, update the project DB, regenerate the reading,
   return the access link to CS.
@@ -286,6 +286,9 @@ must still do:
    reading — birthday, birthTime, zodiac, gender — set `regen_ref` +
    `regen_kind` to the main order so the executor regenerates after the patch
    lands. For a cosmetic fix like a misspelled name, patch only.
+   **Before you promise the fix, read "What a regenerate actually rebuilds"
+   below.** A regenerate does not rebuild everything, and what it misses
+   differs per project.
 4. `gates_passed` is still required. Use `profile.customer_resolved` and
    `profile.fields_differ` — say what you verified, even without a payment
    gate.
@@ -298,6 +301,61 @@ customer record and you can't tell which one the ticket means, the requested
 field isn't in the whitelist (e.g. email itself — that one is never
 patchable), or the "correction" would contradict what ClickBank has on file
 for a paid order.
+
+### What a regenerate actually rebuilds
+
+Patch-then-regenerate is still the right move in almost every case — keep
+doing it. But it does not rebuild the whole product, and if you tell CS
+"fixed" when it isn't, the customer comes back angrier than before. Check the
+project before you word the reply.
+
+**asksabrina, `engineVersion: 'v2'` — the moon sign and window dates are
+frozen.**
+
+Those orders carry a cached astronomical layer: `moon_phase`, `moon_sign`, and
+13 dated `windows`, computed once at first generation and then deliberately
+reused by every tier so a customer's dates never drift between products. A
+regenerate reuses that cache; it does not recompute it.
+
+So after patching a birthday or birthplace and regenerating a v2 main order:
+
+- Her name, birth date, city and country **do** refresh in the prose.
+- Her moon sign, moon phase and all 13 window dates **do not** — they still
+  describe the old birth data.
+- The reading can therefore end up self-contradictory: the corrected birth
+  date printed next to the moon sign derived from the wrong one.
+
+What to do:
+
+- Check `engineVersion` on the order. `v1` (tarot) and astroloversketch have
+  no such cache — regenerate normally and say nothing about this.
+- For `v2`, still patch and still regenerate. Then **say plainly in the draft
+  what will and will not change**, so CS never promises a new moon sign.
+- If the customer's actual complaint is the moon sign or the window dates,
+  a regenerate cannot satisfy it. `escalate_to_human` and state that a Layer 1
+  recompute is required — engineering has an admin-only endpoint for it
+  (`POST /api/admin/v2/recompute-layer1/:mainOrderId`). You have no tool for
+  it; do not claim you ran it.
+- Worth knowing before escalating: birthplace can never change a moon sign
+  anyway. Positions are geocentric and the whole Earth spans under 0.6° of
+  parallax against a 30°-wide sign. A customer certain their moon sign is
+  wrong is usually comparing against a Vedic/sidereal calculator, which names
+  the previous sign by design. That is a different zodiac, not our error.
+
+**astroloversketch — regenerating the main order re-rolls the portrait.**
+
+The sketch/profile is selected from a pre-authored library keyed by gender
+preference, age range and ethnicity preference, and among matching variants
+the pick is random. Consequences:
+
+- Regenerating `main` can hand back a **different portrait** even when the
+  patch was cosmetic. Never promise "same sketch, just corrected".
+- Correcting a birth date often changes nothing visible, because the birth
+  chart is not part of the selection key. It only moves if the correction
+  changes age, gender preference, ethnicity preference or the opposite zodiac
+  sign.
+- If the customer likes their sketch and only wants a spelling fixed, **patch
+  only** — do not set `regen_ref`.
 
 ## What you must NEVER do without explicit human approval
 
