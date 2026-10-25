@@ -237,6 +237,51 @@ describe('verifyPaymentGate', () => {
     expect(result.warnings).toEqual([])
   })
 
+  it('bridges via the Maropost contact when the receipt has contact_id but no cId', () => {
+    const result = verifyPaymentGate({
+      order: makeOrder({
+        vendor: 'astrosketc',
+        email: 'paid-with-this@example.com',
+        contact_id: '7434319',
+      }),
+      expected_email: 'optin@example.com',
+      expected_customer_id: 'cust_lee',
+      maropost_customer_id: 'cust_lee',
+      expected_project: 'astroloversketch',
+    })
+    expect(result.passed).toBe(true)
+    expect(result.details.maropost_bridge_matched).toBe(true)
+    expect(result.details.receipt_email_bridge_used).toBe(false)
+    expect(result.warnings[0]).toMatch(/contact_id="7434319"/)
+    expect(result.warnings[0]).toMatch(/cust_lee/)
+  })
+
+  it('fails when the Maropost contact points at a different customer', () => {
+    const result = verifyPaymentGate({
+      order: makeOrder({ email: 'paid-with-this@example.com', contact_id: '7434319' }),
+      expected_email: 'optin@example.com',
+      expected_customer_id: 'cust_lee',
+      maropost_customer_id: 'cust_someone_else',
+      expected_project: 'asksabrina',
+    })
+    expect(result.passed).toBe(false)
+    expect(result.details.maropost_bridge_matched).toBe(false)
+  })
+
+  it('prefers the Maropost bridge over the receipt-email bridge', () => {
+    const result = verifyPaymentGate({
+      order: makeOrder({ email: 'paid-with-this@example.com', contact_id: '7434319' }),
+      expected_email: 'optin@example.com',
+      expected_customer_id: 'cust_lee',
+      maropost_customer_id: 'cust_lee',
+      identity_via_receipt_email: true,
+      expected_project: 'asksabrina',
+    })
+    expect(result.passed).toBe(true)
+    expect(result.details.maropost_bridge_matched).toBe(true)
+    expect(result.details.receipt_email_bridge_used).toBe(false)
+  })
+
   it('reports multiple failures at once', () => {
     const result = verifyPaymentGate({
       order: makeOrder({

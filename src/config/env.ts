@@ -61,6 +61,12 @@ const schema = z.object({
 
   ASTROLOVERSKETCH_API_BASE: z.string().url().optional().or(z.literal('')),
   ASTROLOVERSKETCH_AGENT_KEY: z.string().optional().or(z.literal('')),
+
+  // Maropost (read-only contact lookup). Bridges the contact_id that Maropost
+  // email funnels pass to ClickBank instead of a cId. Optional: when unset the
+  // bridge is skipped and those receipts escalate as before.
+  MAROPOST_ACCOUNT_ID: z.string().optional().or(z.literal('')),
+  MAROPOST_API_KEY: z.string().optional().or(z.literal('')),
 })
 
 export const env = schema.parse(process.env)

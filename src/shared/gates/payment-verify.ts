@@ -29,6 +29,14 @@ export interface PaymentGateInput {
    * resolved customer_id so the audit log captures the trust chain.
    */
   identity_via_receipt_email?: boolean
+  /**
+   * Optional. The `<project>_customer_id` field Maropost holds for the
+   * receipt's `contact_id` vendor variable. The caller fetches it server-side
+   * (maropost.customerIdForOrder) — it never comes from the LLM. When it
+   * equals `expected_customer_id` the gate accepts it as an identity bridge,
+   * just like the cId bridge: the brand backend wrote the field at opt-in.
+   */
+  maropost_customer_id?: string
   expected_project: string
   min_amount?: number              // default 0.01
 }
@@ -42,6 +50,7 @@ export interface PaymentGateResult {
     transaction_type_ok?: boolean
     email_matches?: boolean
     customer_id_bridge_matched?: boolean
+    maropost_bridge_matched?: boolean
     receipt_email_bridge_used?: boolean
     amount_ok?: boolean
     vendor_project_matches?: boolean
@@ -76,13 +85,15 @@ export function verifyPaymentGate(input: PaymentGateInput): PaymentGateResult {
     failures.push(`transaction type is "${o.transaction_type}", expected SALE or BILL`)
   }
 
-  // Identity check: pass on any of three signals, in priority order —
+  // Identity check: pass on any of four signals, in priority order —
   //   1. ticket/optin email matches the receipt billing email
   //   2. cId vendor variable matches the resolved customer_id
-  //   3. caller asserts the customer_id was resolved by looking up the
+  //   3. the Maropost contact behind the contact_id vendor variable carries
+  //      the resolved customer_id (Maropost email funnels send no cId)
+  //   4. caller asserts the customer_id was resolved by looking up the
   //      receipt email in the project DB (last-resort bridge for CB orders
   //      that carry no cId vendor variable — common on OTO funnels)
-  // Bridges 2 and 3 produce a warning so the trust chain is visible in
+  // Bridges 2–4 produce a warning so the trust chain is visible in
   // the audit log and the approval message.
   const expectedEmail = input.expected_email.toLowerCase().trim()
   const emailMatches = o.email === expectedEmail
@@ -90,20 +101,28 @@ export function verifyPaymentGate(input: PaymentGateInput): PaymentGateResult {
     !!input.expected_customer_id &&
     !!o.customer_id &&
     o.customer_id === input.expected_customer_id
+  const maropostBridge =
+    !emailMatches &&
+    !customerIdBridge &&
+    !!input.expected_customer_id &&
+    !!input.maropost_customer_id &&
+    input.maropost_customer_id === input.expected_customer_id
   // Receipt-email bridge only engages when the cheaper bridges are unavailable:
-  // not an email match, and either no cId in vendor variables or it didn't
-  // match. The cId path is strictly preferred when both signals exist.
+  // not an email match, and neither the cId nor the Maropost bridge matched.
+  // Those paths are strictly preferred when their signals exist.
   const receiptEmailBridge =
     !!input.identity_via_receipt_email &&
     !!input.expected_customer_id &&
     !emailMatches &&
-    !customerIdBridge
+    !customerIdBridge &&
+    !maropostBridge
 
   details.email_matches = emailMatches
   details.customer_id_bridge_matched = customerIdBridge
+  details.maropost_bridge_matched = maropostBridge
   details.receipt_email_bridge_used = receiptEmailBridge
 
-  if (!emailMatches && !customerIdBridge && !receiptEmailBridge) {
+  if (!emailMatches && !customerIdBridge && !maropostBridge && !receiptEmailBridge) {
     let msg = `receipt email "${o.email}" does not match expected "${expectedEmail}"`
     if (input.expected_customer_id) {
       msg += ` (customer_id bridge also did not match: order.customer_id="${o.customer_id ?? 'unset'}" vs expected "${input.expected_customer_id}")`
@@ -116,6 +135,10 @@ export function verifyPaymentGate(input: PaymentGateInput): PaymentGateResult {
   } else if (!emailMatches && customerIdBridge) {
     warnings.push(
       `payment email "${o.email}" differs from optin email "${expectedEmail}" — identity verified via customer_id="${o.customer_id}"`,
+    )
+  } else if (maropostBridge) {
+    warnings.push(
+      `payment email "${o.email}" differs from ticket/optin email "${expectedEmail}" and ClickBank carries no matching cId — identity verified via Maropost contact_id="${o.contact_id}", whose customer_id field is "${input.maropost_customer_id}"`,
     )
   } else if (receiptEmailBridge) {
     warnings.push(

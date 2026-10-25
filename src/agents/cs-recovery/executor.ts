@@ -1,5 +1,6 @@
 import { ObjectId } from 'mongodb'
 import * as clickbank from '@/shared/connectors/clickbank.js'
+import * as maropost from '@/shared/connectors/maropost.js'
 import { getConnector } from '@/config/projects.js'
 import type { OrderKind, UnifiedCustomerView, UnifiedProduct } from '@/shared/connectors/types.js'
 import { verifyPaymentGate } from '@/shared/gates/payment-verify.js'
@@ -145,6 +146,7 @@ async function executeUpdateOrder(input: ExecuteInput): Promise<ExecuteOutput> {
     expected_email: customer_email,
     expected_customer_id: draft.customer_id,
     identity_via_receipt_email: draft.identity_via_receipt_email,
+    maropost_customer_id: await maropost.customerIdForOrder(order, project),
     expected_project: project,
   })
   if (!gate.passed) {
@@ -364,6 +366,7 @@ async function executeCreateOrder(input: ExecuteInput): Promise<ExecuteOutput> {
     expected_email: customer_email,
     expected_customer_id: draft.customer_id,
     identity_via_receipt_email: draft.identity_via_receipt_email,
+    maropost_customer_id: await maropost.customerIdForOrder(order, project),
     expected_project: project,
   })
   if (!gate.passed) {

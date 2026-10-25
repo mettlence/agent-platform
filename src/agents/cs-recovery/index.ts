@@ -4,6 +4,7 @@ import type { Message, ContentBlock } from '@/shared/llm/client.js'
 import { buildSystemPrompt, type SystemPromptOptions } from './prompt.js'
 import { csRecoveryTools } from './tools.js'
 import * as clickbank from '@/shared/connectors/clickbank.js'
+import * as maropost from '@/shared/connectors/maropost.js'
 import { getConnector, vendorOf, type ProjectKey } from '@/config/projects.js'
 import type { UnifiedCustomerView } from '@/shared/connectors/types.js'
 import { verifyPaymentGate } from '@/shared/gates/payment-verify.js'
@@ -309,6 +310,7 @@ async function dispatchTool(
           expected_email: ctx.customer_email,
           expected_customer_id,
           identity_via_receipt_email,
+          maropost_customer_id: await maropost.customerIdForOrder(order, ctx.project),
           expected_project: ctx.project,
         })
         return { output: { order, gate } }
@@ -361,6 +363,24 @@ async function dispatchTool(
           if (view) matchedVia = 'payment_email'
         }
 
+        // Step 5: Maropost email funnels carry contact_id instead of cId, and
+        // the buyer often pays with a different email than they opted in with.
+        // The contact holds the customer _id the backend wrote at opt-in, and
+        // its own email as a fallback.
+        let maropostContact: maropost.MaropostContact | null = null
+        if (!view && order.contact_id && maropost.isConfigured()) {
+          maropostContact = await maropost.getContact(order.contact_id).catch(() => null)
+          const mpCustomerId = maropostContact?.customer_ids[project]
+          if (mpCustomerId) {
+            view = await conn.lookupCustomer(mpCustomerId)
+            if (view) matchedVia = 'maropost_customer_id'
+          }
+          if (!view && maropostContact?.email) {
+            view = await conn.lookupCustomer(maropostContact.email)
+            if (view) matchedVia = 'maropost_email'
+          }
+        }
+
         const optinEmail = view?.customer.email ?? null
         const emailMismatch = !!optinEmail && optinEmail.toLowerCase().trim() !== order.email
 
@@ -373,10 +393,16 @@ async function dispatchTool(
             optin_email: optinEmail,
             customer_id: order.customer_id ?? null,
             contact_id: order.contact_id ?? null,
+            maropost_email: maropostContact?.email ?? null,
+            maropost_customer_id: maropostContact?.customer_ids[project] ?? null,
             vendor_variables: order.vendor_variables,
             email_mismatch: emailMismatch,
             ...(order.contact_id && !view
-              ? { note: `no ${project} match — contact_id present, future Maropost lookup can resolve to optin email` }
+              ? {
+                  note: maropost.isConfigured()
+                    ? `no ${project} match — Maropost contact ${order.contact_id} did not resolve to a ${project} customer either`
+                    : `no ${project} match — contact_id present but Maropost is not configured`,
+                }
               : {}),
           },
         }
@@ -400,11 +426,21 @@ async function dispatchTool(
         // (potentially fragmented) customer record.
         const receiptsByCid = new Map<string, string[]>()
         const receiptsWithoutCid: string[] = []
+        // Receipts from Maropost email funnels have no cId; resolve their
+        // contact_id to the customer _id Maropost holds, and group them as if
+        // the cId had been there. Unresolvable ones stay in receipts_without_cid.
+        const mpCustomerIds = new Map<string, string | undefined>()
+        for (const contactId of new Set(receipts.filter((r) => !r.customer_id && r.contact_id).map((r) => r.contact_id as string))) {
+          mpCustomerIds.set(contactId, await maropost.customerIdForContact(contactId, project))
+        }
+        const receiptsViaMaropost: string[] = []
         for (const r of receipts) {
-          if (r.customer_id) {
-            const list = receiptsByCid.get(r.customer_id) ?? []
+          const cId = r.customer_id ?? (r.contact_id ? mpCustomerIds.get(r.contact_id) : undefined)
+          if (cId) {
+            const list = receiptsByCid.get(cId) ?? []
             list.push(r.receipt)
-            receiptsByCid.set(r.customer_id, list)
+            receiptsByCid.set(cId, list)
+            if (!r.customer_id) receiptsViaMaropost.push(r.receipt)
           } else {
             receiptsWithoutCid.push(r.receipt)
           }
@@ -460,6 +496,7 @@ async function dispatchTool(
             total_receipts: receipts.length,
             receipts_by_cid: Object.fromEntries(receiptsByCid),
             receipts_without_cid: receiptsWithoutCid,
+            receipts_via_maropost: receiptsViaMaropost,
             receipts_unresolved: receiptsUnresolved,
             records,
             fragmentation_warning:

@@ -11,7 +11,7 @@ export const csRecoveryTools: Tool[] = [
   {
     name: 'resolve_customer_identity',
     description:
-      'Given a ClickBank receipt, resolve the asksabrina customer record even when the payment email differs from the optin email. Tries in order: (1) lookup by receipt at the project, (2) ClickBank vendorVariables.cId → lookup by customer id, (3) lookup by ClickBank payment email. Returns the customer view, matched_via, payment_email, optin_email, customer_id (cId), contact_id (Maropost), vendor_variables, and email_mismatch flag. Use this BEFORE verify_clickbank_receipt whenever the customer email in the ticket may be wrong or the receipt is the only reliable identifier.',
+      'Given a ClickBank receipt, resolve the asksabrina customer record even when the payment email differs from the optin email. Tries in order: (1) lookup by receipt at the project, (2) ClickBank vendorVariables.cId → lookup by customer id, (3) lookup by ClickBank payment email, (4) when the receipt carries a Maropost contact_id instead of a cId: the contact\'s <project>_customer_id field (matched_via="maropost_customer_id"), then the contact\'s email (matched_via="maropost_email"). Returns the customer view, matched_via, payment_email, optin_email, customer_id (cId), contact_id, maropost_email, maropost_customer_id, vendor_variables, and email_mismatch flag. Use this BEFORE verify_clickbank_receipt whenever the customer email in the ticket may be wrong or the receipt is the only reliable identifier.',
     input_schema: {
       type: 'object',
       properties: {
@@ -37,7 +37,7 @@ export const csRecoveryTools: Tool[] = [
   {
     name: 'verify_clickbank_receipt',
     description:
-      'Fetch a ClickBank order by receipt ID and run it through the payment gate. Returns { order, gate } where gate.passed indicates whether all conditions are met (transaction type SALE/BILL, identity match, amount > 0, vendor maps to expected project). Pass expected_customer_id (from resolve_customer_identity) when the payment email legitimately differs from the optin email — the gate will bridge identity via the ClickBank cId vendor variable. When ClickBank carries no cId AND identity was resolved by looking up the receipt email in the project DB (resolve_customer_identity returned matched_via="payment_email"), also pass identity_via_receipt_email=true to enable the last-resort bridge. Never propose mark-paid without calling this first.',
+      'Fetch a ClickBank order by receipt ID and run it through the payment gate. Returns { order, gate } where gate.passed indicates whether all conditions are met (transaction type SALE/BILL, identity match, amount > 0, vendor maps to expected project). Pass expected_customer_id (from resolve_customer_identity) when the payment email legitimately differs from the optin email — the gate will bridge identity via the ClickBank cId vendor variable, or — when the receipt has a contact_id but no cId — via the Maropost contact\'s customer_id field, which the server fetches itself. When ClickBank carries no cId AND identity was resolved by looking up the receipt email in the project DB (resolve_customer_identity returned matched_via="payment_email"), also pass identity_via_receipt_email=true to enable the last-resort bridge. Never propose mark-paid without calling this first.',
     input_schema: {
       type: 'object',
       properties: {
@@ -194,7 +194,7 @@ export const csRecoveryTools: Tool[] = [
         gates_passed: {
           type: 'array',
           items: { type: 'string' },
-          description: 'Named gates that returned passed=true (e.g. "clickbank.transaction_type_ok", "clickbank.identity_via_email", "clickbank.identity_via_cId", "clickbank.identity_via_receipt_email", "clickbank.subscription_active").',
+          description: 'Named gates that returned passed=true (e.g. "clickbank.transaction_type_ok", "clickbank.identity_via_email", "clickbank.identity_via_cId", "clickbank.identity_via_maropost", "clickbank.identity_via_receipt_email", "clickbank.subscription_active").',
         },
       },
       required: ['action_type', 'project', 'order_kind', 'reasoning', 'gates_passed'],
