@@ -180,8 +180,8 @@ When this happens:
    and the record's `customer_id`. This is the canonical recovery case.
 4. Receipts listed in `receipts_unresolved` had cId values that didn't
    resolve to any asksabrina record (likely archived); receipts in
-   `receipts_without_cid` had no cId at all (Maropost funnel). Escalate
-   these — the platform cannot bridge them today.
+   `receipts_without_cid` had no cId and no Maropost contact that resolves
+   to a customer. Escalate these — the platform cannot bridge them.
 
 #### Escalation format for fragmented cases
 
@@ -228,11 +228,26 @@ half done.
 ### When only a `contact_id` is present (no `cId`)
 
 ClickBank orders coming from a Maropost funnel carry `contact_id` in
-`vendor_variables` but no `cId`. Today the platform cannot turn that
-`contact_id` into an email automatically (Maropost connector is pending).
-If `resolve_customer_identity` returns `contact_id` but no `customer_view`,
-escalate with the data — include the `contact_id` in the summary so a human
-can look it up in Maropost manually.
+`vendor_variables` but no `cId`, and the buyer often pays with a different
+email than they opted in with. `resolve_customer_identity` bridges this by
+itself: it reads the Maropost contact, looks the customer up by the
+contact's `<project>_customer_id` field (`matched_via="maropost_customer_id"`)
+and then by the contact's email (`matched_via="maropost_email"`).
+`maropost_email` in the output is the opt-in email — use it in the reply
+so the customer knows which account holds their readings.
+
+For the gate, pass the resolved `customer_id` as `expected_customer_id` on
+`verify_clickbank_receipt` and `propose_action`. The server re-reads the
+Maropost contact and passes the gate when its customer_id field matches
+(`clickbank.identity_via_maropost`). Do not set `identity_via_receipt_email`
+for this case.
+
+`find_all_customer_records` groups such receipts under the bridged
+customer and lists them in `receipts_via_maropost`.
+
+If `resolve_customer_identity` still returns `contact_id` but no
+`customer_view`, escalate with the data — include the `contact_id` and
+`maropost_email` in the summary.
 
 ## Gates (you must pass before proposing any action)
 
@@ -243,16 +258,20 @@ can look it up in Maropost manually.
   2. **cId bridge** — ClickBank `vendorVariables.cId` matches the resolved
      customer record. Common on v2 funnels; tolerates legitimate
      payment-email vs optin-email mismatch (~15% of recoveries).
-  3. **receipt-email bridge** (last resort) — ClickBank carries no cId,
+  3. **Maropost bridge** — no cId, but the receipt's `contact_id` belongs to
+     a Maropost contact whose `<project>_customer_id` field equals the
+     resolved customer. Automatic once you pass `expected_customer_id`; the
+     server fetches the contact itself.
+  4. **receipt-email bridge** (last resort) — ClickBank carries no cId,
      and the receipt billing email resolves to a customer record in the
      project DB via `resolve_customer_identity` (`matched_via="payment_email"`).
      To use this, call `verify_clickbank_receipt` with both
      `expected_customer_id` AND `identity_via_receipt_email=true`, then
      mirror the flag onto `propose_action`. The gate passes with a warning
      that names both emails and the resolved customer_id; the warning is
-     captured in the audit log. **Use only when bridge 2 is unavailable.**
+     captured in the audit log. **Use only when bridges 2 and 3 are unavailable.**
 
-  When bridge 2 or 3 is used, the draft `reasoning` MUST explicitly list:
+  When bridge 2, 3 or 4 is used, the draft `reasoning` MUST explicitly list:
   the ticket/optin email, the receipt billing email, the resolved customer
   (name + id), and one sentence on why the approver should still believe
   it's the same person. The human approval is the actual safety net —
