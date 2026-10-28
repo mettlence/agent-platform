@@ -2,9 +2,9 @@ import type { Message } from 'discord.js'
 import { ObjectId } from 'mongodb'
 import { runCsRecovery } from '@/agents/cs-recovery/index.js'
 import {
+  chunkMessage,
   createThreadFromMessage,
   getDiscordClient,
-  sendDM,
   sendToThread,
   startTyping,
 } from '@/shared/connectors/discord.js'
@@ -196,8 +196,8 @@ export async function handleMentionCommand(message: Message): Promise<void> {
   // Relayed tickets get NO thread at all. A message-anchored thread leaves a
   // "N Messages ›" strip under the handover; a detached private thread still
   // lists in the sidebar. Both defeat the point of a two-line protocol, so the
-  // transcript stays in Mongo and long-form detail goes to the approver's DM,
-  // where they are already reading the draft.
+  // transcript stays in Mongo and long-form detail is a reply to the relaying
+  // bot's message, so Tala reads it in the chat it asked in.
   //
   // The cost, stated plainly: with no thread there is nowhere to hold a
   // follow-up turn, so a relayed ticket is single-shot. A follow-up means
@@ -211,14 +211,16 @@ export async function handleMentionCommand(message: Message): Promise<void> {
   // real thread id.
   const threadId = thread?.id ?? message.id
 
-  // Where long-form output goes: the thread for human-filed tickets, the
-  // approver's DM for relayed ones.
+  // Where long-form output goes: the thread for human-filed tickets, a reply
+  // to the relaying bot for relayed ones. Only the approval draft stays in the
+  // approver's DM — that is the one thing that must not be actionable by
+  // whoever is in the channel.
   const postDetail = async (text: string): Promise<void> => {
     if (thread) {
       await sendToThread(thread, text)
       return
     }
-    if (relayCtx) await sendDM(relayCtx.approver_user_id, text)
+    if (relayCtx) await replyChunked(message, text, notifyIds)
   }
 
   // Scaffolding for the threaded path only — the relay path already showed an
@@ -456,6 +458,19 @@ async function replyNoPingBack(
   return message
     .reply({ content, allowedMentions: { repliedUser: false, users: pingIds } })
     .catch(() => null)
+}
+
+/**
+ * Long-form reply to the relaying bot, chunked under Discord's 2000-char cap.
+ * Only the tagged CS rep is pinged: the approver already saw the status line,
+ * and pinging the relaying bot back invites a mention loop.
+ */
+async function replyChunked(message: Message, content: string, pingIds: string[]): Promise<void> {
+  for (const chunk of chunkMessage(content)) {
+    await message
+      .reply({ content: chunk, allowedMentions: { repliedUser: false, users: pingIds } })
+      .catch(() => {})
+  }
 }
 
 /**
