@@ -267,8 +267,13 @@ In the channel, exactly two messages per ticket:
      the reason.
    - `ℹ️ <ticket> — no action needed.` when nothing was actually broken.
 
-Everything between those two messages happens in a thread and in rohmaddj's
-DM, so the channel stays readable.
+When the ticket is escalated, needs no action, or errors, a third message
+follows as a reply to Tala's handover: the full write-up (what was checked,
+what Poseidon could not do, suggested next step). Tala can act on it
+directly, e.g. ask the customer for the purchase email or receipt.
+
+Only the approval draft itself goes to rohmaddj's DM, since nobody else may
+approve it.
 
 **Tala should not re-send a ticket that's already in flight.** There's no
 fixed turnaround — it depends on when rohmaddj sees the DM. Re-sending
