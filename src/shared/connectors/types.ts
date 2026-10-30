@@ -23,7 +23,15 @@ export interface UnifiedProduct {
   readingUrl?: string | null
   /** Asksabrina-only. Other brands omit. */
   engineVersion?: 'v1' | 'v2'
+  /** Astroloversketch main orders only. The predicted meeting place the reading shows. */
+  meetingPlace?: string | null
   activeJob?: UnifiedJob | null
+}
+
+export interface UnifiedPlace {
+  city?: string
+  state?: string
+  country?: string
 }
 
 export interface UnifiedSubscription {
@@ -53,6 +61,10 @@ export interface UnifiedCustomerView {
     email: string
     firstName?: string
     lastName?: string
+    /** Astroloversketch-only. Where the customer lives; feeds the meeting place. */
+    currentResidence?: UnifiedPlace | null
+    /** Astroloversketch-only. */
+    birthPlace?: UnifiedPlace | null
   }
   mainOrders: UnifiedProduct[]
   oto1Orders: UnifiedProduct[]
@@ -183,7 +195,7 @@ export interface ProjectConnector {
   ensureReading(
     ref: string,
     kind: OrderKind,
-    opts?: { regenerate?: boolean },
+    opts?: { regenerate?: boolean; rerollLocation?: boolean },
   ): Promise<EnsureReadingResponse>
   getJob(jobId: string): Promise<UnifiedJob | null>
   waitForJob(

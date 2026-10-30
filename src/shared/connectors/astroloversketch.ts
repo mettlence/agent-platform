@@ -18,7 +18,15 @@ export interface AstroloversketchProduct {
   readingReady: boolean
   downloadUrl?: string | null
   readingUrl?: string | null
+  /** Main orders only. */
+  meetingPlace?: string | null
   activeJob?: AstroloversketchJob | null
+}
+
+export interface AstroloversketchPlace {
+  city?: string
+  state?: string
+  country?: string
 }
 
 export interface AstroloversketchCustomerView {
@@ -28,6 +36,8 @@ export interface AstroloversketchCustomerView {
     email: string
     firstName?: string
     lastName?: string
+    currentResidence?: AstroloversketchPlace | null
+    birthPlace?: AstroloversketchPlace | null
   }
   mainOrders: AstroloversketchProduct[]
   oto1Orders: AstroloversketchProduct[]
@@ -81,12 +91,18 @@ export interface EnsureReadingResponse {
 export async function ensureReading(
   ref: string,
   kind: OrderKind,
-  opts: { regenerate?: boolean } = {},
+  opts: { regenerate?: boolean; rerollLocation?: boolean } = {},
 ): Promise<EnsureReadingResponse> {
   const res = await fetch(`${baseUrl()}/ensure-reading`, {
     method: 'POST',
     headers: headers(),
-    body: JSON.stringify({ ref, kind, ...(opts.regenerate ? { regenerate: true } : {}) }),
+    body: JSON.stringify({
+      ref,
+      kind,
+      ...(opts.regenerate ? { regenerate: true } : {}),
+      // Draws a new meeting place. The backend only accepts it with kind=main.
+      ...(opts.rerollLocation ? { rerollLocation: true } : {}),
+    }),
   })
   if (!res.ok) {
     throw new Error(`astroloversketch ensureReading failed: ${res.status} ${await res.text()}`)

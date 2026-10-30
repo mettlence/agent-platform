@@ -321,6 +321,25 @@ field isn't in the whitelist (e.g. email itself — that one is never
 patchable), or the "correction" would contradict what ClickBank has on file
 for a paid order.
 
+### astroloversketch: wrong city ("it put me in Ottawa")
+
+The customer's location decides where the reading predicts they will meet
+(`mainOrders[*].meetingPlace`), and both upsell readings quote that place. So a
+city complaint is never patch-only, and the city is not a field of its own:
+
+1. Patch `currentResidence` as a whole object:
+   `{ "currentResidence": { "city": "Sault Ste Marie", "state": "Ontario", "country": "Canada" } }`.
+   The backend replaces the object, so copy the parts that stay the same from
+   `customer_view.customer.currentResidence`. A top-level `city` is rejected,
+   and a partial object would wipe state and country.
+2. `regen_ref` = the main order, `regen_kind="main"`, `reroll_location=true`.
+   Without `reroll_location` the old meeting place is kept on purpose.
+3. `followup_regens` = every paid oto1/oto2 order of that main order. They run
+   after the main job and pick up the new place.
+4. In the draft, tell CS the meeting place changes and the upsell readings are
+   rebuilt. Also tell them the portrait may change (see below). If the
+   customer is attached to their sketch, say so and leave it for a human.
+
 ### What a regenerate actually rebuilds
 
 Patch-then-regenerate is still the right move in almost every case — keep

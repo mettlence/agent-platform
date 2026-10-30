@@ -151,6 +151,13 @@ export async function handleReactionAdd(
         } else if (!r.reading_link && !r.download_link) {
           lines.push('- (no link resolved — check asksabrina admin for this order ref)')
         }
+        for (const f of r.followups ?? []) {
+          const note =
+            f.status === 'skipped_main_pending'
+              ? 'skipped: the main reading was still generating, regenerate it once that is done'
+              : f.status
+          lines.push(`- ${f.kind} \`${f.ref}\` regenerated: ${note}`)
+        }
       }
       lines.push('', 'Send to customer or paste into LiveAgent reply.')
       // Channel summary drops the action id and the internal instruction —
