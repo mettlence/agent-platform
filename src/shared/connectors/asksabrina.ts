@@ -96,7 +96,9 @@ export interface EnsureReadingResponse {
 export async function ensureReading(
   ref: string,
   kind: OrderKind,
-  opts: { regenerate?: boolean } = {},
+  // rerollLocation is accepted for the shared connector surface and ignored:
+  // asksabrina readings have no meeting place.
+  opts: { regenerate?: boolean; rerollLocation?: boolean } = {},
 ): Promise<EnsureReadingResponse> {
   const res = await fetch(`${env.ASKSABRINA_API_BASE}/ensure-reading`, {
     method: 'POST',

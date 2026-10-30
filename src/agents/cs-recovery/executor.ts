@@ -70,6 +70,18 @@ export interface DraftAction {
   regen_ref?: string
   /** OPTIONAL for update_customer_profile, paired with regen_ref. */
   regen_kind?: 'main' | 'oto1' | 'oto2' | 'subscription'
+  /**
+   * OPTIONAL for update_customer_profile, astroloversketch only, with
+   * regen_kind='main'. Draws a new meeting place for the corrected residence;
+   * a plain regenerate keeps the old one.
+   */
+  reroll_location?: boolean
+  /**
+   * OPTIONAL for update_customer_profile. Readings to regenerate once the
+   * regen_ref job is done, in order — e.g. the OTOs, which read the meeting
+   * place back from the main order.
+   */
+  followup_regens?: Array<{ ref: string; kind: 'main' | 'oto1' | 'oto2' | 'subscription' }>
   before?: Record<string, unknown>
   after?: Record<string, unknown>
   reasoning: string
@@ -102,6 +114,8 @@ export interface ExecuteOutput {
      * rather than imply the link is missing forever.
      */
     job_pending?: boolean
+    /** update_customer_profile only: the followup_regens and how each ended. */
+    followups?: Array<{ ref: string; kind: string; job_id?: string; status: string }>
   }
   error?: string
   gate_failures?: string[]
@@ -560,16 +574,36 @@ async function executeUpdateCustomerProfile(input: ExecuteInput): Promise<Execut
     let jobId: string | undefined
     let jobPending = false
     let urls: Awaited<ReturnType<typeof resolveActionUrls>> = {}
+    const followups: Array<{ ref: string; kind: string; job_id?: string; status: string }> = []
 
     if (draft.regen_ref && draft.regen_kind) {
       const ensureRes = await conn.ensureReading(draft.regen_ref, draft.regen_kind, {
         regenerate: true,
+        ...(draft.reroll_location ? { rerollLocation: true } : {}),
       })
       if (ensureRes.status !== 'already_ready' && ensureRes.jobId) {
         jobId = ensureRes.jobId
         const finalJob = await conn.waitForJob(ensureRes.jobId, { timeoutMs: 5 * 60 * 1000 })
         if (finalJob?.status !== 'done') jobPending = true
       }
+
+      // Follow-ups read what the first job writes (the OTOs read the main
+      // order's meeting place), so they only run once it is done. While it is
+      // still pending they would rebuild from the old data.
+      for (const f of draft.followup_regens ?? []) {
+        if (jobPending) {
+          followups.push({ ref: f.ref, kind: f.kind, status: 'skipped_main_pending' })
+          continue
+        }
+        const res = await conn.ensureReading(f.ref, f.kind, { regenerate: true })
+        let status: string = res.status
+        if (res.status !== 'already_ready' && res.jobId) {
+          const job = await conn.waitForJob(res.jobId, { timeoutMs: 5 * 60 * 1000 })
+          status = job?.status === 'done' ? 'done' : 'pending'
+        }
+        followups.push({ ref: f.ref, kind: f.kind, job_id: res.jobId, status })
+      }
+
       urls = await resolveActionUrls({
         project,
         customer_email,
@@ -592,7 +626,13 @@ async function executeUpdateCustomerProfile(input: ExecuteInput): Promise<Execut
       approved_at: new Date(),
       executed_at: new Date(),
       result: 'success',
-      result_meta: { ...urls, job_id: jobId, regen_ref: draft.regen_ref ?? null },
+      result_meta: {
+        ...urls,
+        job_id: jobId,
+        regen_ref: draft.regen_ref ?? null,
+        reroll_location: draft.reroll_location ?? false,
+        followups,
+      },
     })
 
     return {
@@ -605,6 +645,7 @@ async function executeUpdateCustomerProfile(input: ExecuteInput): Promise<Execut
         kind: draft.regen_kind,
         job_id: jobId,
         job_pending: jobPending,
+        followups,
       },
     }
   } catch (err) {

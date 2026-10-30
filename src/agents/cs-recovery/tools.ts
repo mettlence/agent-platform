@@ -153,7 +153,7 @@ export const csRecoveryTools: Tool[] = [
         patch: {
           type: 'object',
           description:
-            'REQUIRED for action_type=update_customer_profile. Object of customer-profile field → new value. Per-project whitelist (the backend rejects unknown keys naming the offender): asksabrina allows firstName, lastName, fullName, phoneNumber, gender, horoscope, birthday, birthTime, age, martialStatus, country, city. astroloversketch allows firstName, lastName, fullName, phoneNumber, gender, zodiacSign, oppositeZodiacSign, birthday, birthTime, age, maritalStatus, interestedGender, interestedAge, interestedEthnicity, plus nested objects currentResidence and birthPlace (whole object replaced). `age` must be a number, everything else a string, nested objects are plain objects. Inspect the customer_view first so the patch only includes fields that actually need to change — DO NOT pass values that already match.',
+            'REQUIRED for action_type=update_customer_profile. Object of customer-profile field → new value. Per-project whitelist (the backend rejects unknown keys naming the offender): asksabrina allows firstName, lastName, fullName, phoneNumber, gender, horoscope, birthday, birthTime, age, martialStatus, country, city. astroloversketch allows firstName, lastName, fullName, phoneNumber, gender, zodiacSign, oppositeZodiacSign, birthday, birthTime, age, maritalStatus, interestedGender, interestedAge, interestedEthnicity, plus nested objects currentResidence and birthPlace (whole object replaced). astroloversketch has NO top-level city/state/country: a city correction is `currentResidence: { city, state, country }`, sent whole with the unchanged parts copied from customer_view.customer.currentResidence (a partial object wipes the rest). `age` must be a number, everything else a string, nested objects are plain objects. Inspect the customer_view first so the patch only includes fields that actually need to change — DO NOT pass values that already match.',
         },
         regen_ref: {
           type: 'string',
@@ -165,6 +165,24 @@ export const csRecoveryTools: Tool[] = [
           enum: ['main', 'oto1', 'oto2', 'subscription'],
           description:
             'OPTIONAL for action_type=update_customer_profile, paired with regen_ref. The kind of the order to regenerate.',
+        },
+        reroll_location: {
+          type: 'boolean',
+          description:
+            'OPTIONAL for action_type=update_customer_profile, astroloversketch only, with regen_kind="main". Draws a new predicted meeting place (customer_view mainOrders[*].meetingPlace) for the corrected currentResidence. Set it on every residence correction: a plain regenerate keeps the old meeting place.',
+        },
+        followup_regens: {
+          type: 'array',
+          description:
+            'OPTIONAL for action_type=update_customer_profile. Readings to regenerate after the regen_ref job finishes, in order: [{ ref, kind }]. On astroloversketch a residence correction must list every paid oto1/oto2 order, because their readings quote the meeting place from the main order.',
+          items: {
+            type: 'object',
+            properties: {
+              ref: { type: 'string' },
+              kind: { type: 'string', enum: ['main', 'oto1', 'oto2', 'subscription'] },
+            },
+            required: ['ref', 'kind'],
+          },
         },
         payment_meta: {
           type: 'object',

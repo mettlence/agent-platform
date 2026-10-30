@@ -3,6 +3,7 @@ import { llm } from '@/shared/llm/index.js'
 import type { Message, ContentBlock } from '@/shared/llm/client.js'
 import { buildSystemPrompt, type SystemPromptOptions } from './prompt.js'
 import { csRecoveryTools } from './tools.js'
+import { validateProfileDraft } from './profile-draft.js'
 import * as clickbank from '@/shared/connectors/clickbank.js'
 import * as maropost from '@/shared/connectors/maropost.js'
 import { getConnector, vendorOf, type ProjectKey } from '@/config/projects.js'
@@ -516,6 +517,7 @@ async function dispatchTool(
       case 'propose_action': {
         const draft = input as {
           action_type?: string
+          project?: string
           order_kind?: string
           ref?: string
           customer_id?: string
@@ -524,38 +526,12 @@ async function dispatchTool(
           patch?: Record<string, unknown>
           regen_ref?: string
           regen_kind?: string
+          reroll_location?: boolean
+          followup_regens?: Array<{ ref?: string; kind?: string }>
         }
         if (draft.action_type === 'update_customer_profile') {
-          if (!draft.customer_id) {
-            return {
-              output: {
-                error:
-                  'update_customer_profile requires customer_id (from customer_view.customer.id)',
-              },
-              is_error: true,
-            }
-          }
-          if (
-            !draft.patch ||
-            typeof draft.patch !== 'object' ||
-            Object.keys(draft.patch).length === 0
-          ) {
-            return {
-              output: {
-                error:
-                  'update_customer_profile requires patch (object of customer-field → new value). See tool description for whitelist per project.',
-              },
-              is_error: true,
-            }
-          }
-          if (draft.regen_ref && !draft.regen_kind) {
-            return {
-              output: {
-                error: 'update_customer_profile: regen_ref requires regen_kind',
-              },
-              is_error: true,
-            }
-          }
+          const error = validateProfileDraft(draft)
+          if (error) return { output: { error }, is_error: true }
         } else if (draft.action_type === 'create_order') {
           if (!draft.customer_id) {
             return {
