@@ -121,15 +121,24 @@ history. Read it off `payment_meta.productSku`:
   the SKU's product role at funnel time. When unsure, escalate with the SKU
   named so a human can confirm.
 
-**astroloversketch**
-- Funnel-side SKU naming pattern is `alsv*` for the main bracelet/sketch
-  product family. OTO SKUs differ — escalate the SKU explicitly if you can't
-  confirm the mapping from prior tickets.
+**astroloversketch** (the same table the backend enforces, `SKU_TO_KIND` in
+the ALS `agent-router.js`):
+- `alsv1-37`, `alsv1-57` → kind=main. The legacy `alsv1`, `alsv1-47`,
+  `alsv1-basic` and `alsv1-advanced` are main too.
+- `alsv1-blueprint`, `alsv1-blueprint-discount` → kind=oto1 (Blueprint)
+- `alsv1-timeline`, `alsv1-timeline-discount` → kind=oto2 (Timeline)
+- The SKU decides the kind, whatever ClickBank's `lineItemType` says. An
+  upsell bought from a marketing email arrives as `lineItemType=STANDARD`
+  with only `campaign` and `contact_id` in vendor_variables. It is still the
+  same product.
+- Never pick a kind because that slot is empty on the customer. A Blueprint
+  receipt is oto1 even when the customer has no oto2.
 
 The backend ALSO enforces this — `create_order` returns 422
-`sku_kind_mismatch` if you propose kind=oto1/oto2/subscription with a main
-SKU (or vice versa). Treat that error as a signal you mis-classified; redraft
-with the correct kind.
+`sku_kind_mismatch` with an `expectedKind` field if the kind does not match
+the SKU. That error means you mis-classified. Take `expectedKind` as the
+answer, then re-check "Repeat purchases" before you redraft, because the
+right outcome may be no order at all.
 
 ### Repeat purchases
 
@@ -152,6 +161,34 @@ Escalation template addition: when proposing create_order for a repeat
 purchase, your reasoning MUST explicitly call out "second main purchase by
 existing customer (prior main = ORD…, paid + delivered)" so the human
 approver sees you understood the pattern.
+
+#### astroloversketch: an upsell the customer already owns
+
+On ALS, readings are keyed by customer id, with one reading per product:
+`/reading/oto1/<customer_id>` is the Blueprint and `/reading/oto2/<customer_id>`
+is the Timeline. A second Blueprint order on the same customer gives them
+**nothing new**. The page keeps showing one Blueprint, and generating it again
+can replace the text they already have.
+
+The usual source is a Maropost email that sells the Blueprint or Timeline
+again to someone who already bought it. The receipt has
+`lineItemType=STANDARD`, `cbur=d`, no `cId` and no `orderId`.
+
+So when the receipt's SKU maps to oto1 or oto2 and `customer_view` already
+has a paid order of that kind with `readingReady=true`:
+
+- **Do NOT draft `create_order`, and do not regenerate.**
+- `escalate_to_human` with the reason "repeat purchase of <product> the
+  customer already owns (<existing ORD…>, paid + ready)".
+- In the summary, give the existing reading URL and download URL, and list
+  every earlier receipt for the same product.
+- `suggested_next_step`: 1. Send the customer the existing link. 2. Offer a
+  refund of the duplicate receipt, which CS processes in ClickBank (refunds
+  are not your job).
+
+If the customer does NOT have that kind yet (no paid oto1 for a Blueprint
+receipt), the order really is missing. Draft `create_order` as usual with
+the SKU's kind and the most recent paid main as `main_order_id`.
 
 ### Fragmented customer records
 
